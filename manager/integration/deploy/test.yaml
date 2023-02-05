@@ -61,7 +61,9 @@ metadata:
 spec:
   containers:
   - name: longhorn-test
-    image: longhornio/longhorn-manager-test:master-head
+    #    image: longhornio/longhorn-manager-test:v1.4.x-head
+    image: qazplo/longhorn-manager-test:issue5032-2
+    command: ["/bin/bash", "-c", "trap : TERM INT; sleep infinity & wait"]
 #    args: [
 #           "-x", "-s",
 #           "-m", "coretest",

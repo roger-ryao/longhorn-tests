@@ -4710,30 +4710,77 @@ def test_backup_volume_restore_with_access_mode(core_api, # NOQA
     assert volume_sp_access_mode.accessMode == overridden_restored_access_mode
 
 
-@pytest.mark.skip(reason="TODO")  # NOQA
-def test_delete_backup_during_restoring_volume():  # NOQA
-    """
-    Test delete backup during restoring volume
 
-    Context:
+def test_5246(client, core_api, volume_name):  # NOQA
+    current_host = common.get_self_host_id()
+    vol_v1_name = "vol-v1"
+    vol_v1 = create_and_check_volume(client, vol_v1_name, num_of_replicas=2, size=str(15 * Gi))
+    vol_v1.attach(hostId=current_host)
+    vol_v1 = wait_for_volume_healthy(client, vol_v1_name)
 
-    The volume robustness should be faulted if the backup was deleted during
-    restoring the volume.
+    vol_v1_endpoint = get_volume_endpoint(vol_v1)
+    write_volume_dev_random_mb_data(vol_v1_endpoint, 1, 15000)
 
-    Setup:
+    vol_v1.replicaRemove(name=vol_v1.replicas[1].name)
+    replica_count = 1
+    vol_rebuild = common.wait_for_volume_replica_count(client, vol_v1_name,
+                                                replica_count)
+    replica_count = 2
+    vol_rebuild = common.wait_for_volume_replica_count(client, vol_v1_name,
+                                                replica_count)
+    for i in range(RETRY_COUNTS*4):
+        progress = 0
+        v = client.by_id_volume(vol_v1_name)
+        rebuild_statuses = v.rebuildStatus
+        if rebuild_statuses == []:
+            start = i
+        elif rebuild_statuses != []:
+            for status in rebuild_statuses:
+                progress = status.progress
+        if progress in range(10, 15):
+            print('t1_rebuild_progress', i, progress)
+        elif progress in range(20, 25):
+            print('t1_rebuild_progress', i, progress)
+        elif progress in range(80, 85):
+            print('t1_rebuild_progress', i, progress)
+        elif progress >= 90:
+            print('t1_rebuild_progress', i, progress)
+            end = i
+            break
+        time.sleep(RETRY_INTERVAL/2)
+    t1_rebuild_time = (end - start)/2
 
-    1. Create a volume v1 and attach to a node
-    2. Write some data (>100M) to volume v1
-
-    Steps:
-
-    1. Create a backup of volume v1
-    2. Wait for that backup is completed
-    3. Start to restore a volume v2 from this backup
-       (Not wait for restoration completed)
-    4. Delete the backup immediately
-    5. Check that volume v2 "robustness" is "faulted" and
-       the status of volume restore condition is "False",
-       the reason of volume restore condition is "RestoreFailure"
-    """
-    pass
+    volume = common.wait_for_volume_degraded(client, vol_v1_name)
+    if volume.replicas[1].name == vol_v1.replicas[0].name:
+        volume.replicaRemove(name=volume.replicas[0].name)
+    else:
+        volume.replicaRemove(name=volume.replicas[1].name)
+    replica_count = 1
+    vol_rebuild = common.wait_for_volume_replica_count(client, vol_v1_name,
+                                                replica_count)
+    replica_count = 2
+    vol_rebuild = common.wait_for_volume_replica_count(client, vol_v1_name,
+                                                replica_count)
+    for i in range(RETRY_COUNTS*4):
+        progress = 0
+        v = client.by_id_volume(vol_v1_name)
+        rebuild_statuses = v.rebuildStatus
+        if rebuild_statuses == []:
+            start = i
+        elif rebuild_statuses != []:
+            for status in rebuild_statuses:
+                progress = status.progress
+        if progress in range(10, 15):
+            print('t2_rebuild', i, progress)
+        elif progress in range(20, 25):
+            print('t2_rebuild', i, progress)
+        elif progress in range(80, 85):
+            print('t2_rebuild', i, progress)
+        elif progress >= 90:
+            print('t2_rebuild', i, progress)
+            end = i
+            break
+        time.sleep(RETRY_INTERVAL/2)
+    t2_rebuild_time = (end - start)/2
+    assert t1_rebuild_time >= t2_rebuild_time, \
+        f"t2 {t2_rebuild_time} > t1 {t1_rebuild_time}"

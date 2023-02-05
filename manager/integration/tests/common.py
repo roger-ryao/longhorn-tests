@@ -794,7 +794,7 @@ def copy_pod_volume_data(api, pod_name, src_path, dest_path):
 
 
 def write_volume_dev_random_mb_data(path, offset_in_mb, length_in_mb,
-                                    timeout_cnt=3):
+                                    timeout_cnt=10):
     write_cmd = [
         '/bin/sh',
         '-c',
