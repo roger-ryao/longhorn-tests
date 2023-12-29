@@ -84,8 +84,10 @@ from common import write_pod_volume_random_data, get_pod_data_md5sum
 from common import prepare_pod_with_data_in_mb, exec_command_in_pod
 from common import crash_replica_processes
 from common import wait_for_volume_condition_scheduled
+from common import wait_for_volume_condition_restore
 from common import wait_for_volume_condition_toomanysnapshots
 from common import wait_for_volume_degraded, wait_for_volume_healthy
+from common import wait_for_volume_faulted
 from common import VOLUME_FRONTEND_BLOCKDEV, VOLUME_FRONTEND_ISCSI
 from common import VOLUME_CONDITION_SCHEDULED
 from common import DATA_SIZE_IN_MB_1
@@ -120,6 +122,13 @@ from common import wait_for_snapshot_count
 from common import make_deployment_with_pvc # NOQA
 from common import wait_for_volume_option_trim_auto_removing_snapshots
 from common import FS_TYPE_EXT4, FS_TYPE_XFS
+from common import DEFAULT_BACKUP_COMPRESSION_METHOD
+from common import BACKUP_COMPRESSION_METHOD_LZ4
+from common import BACKUP_COMPRESSION_METHOD_GZIP
+from common import BACKUP_COMPRESSION_METHOD_NONE
+from common import create_and_wait_deployment
+from common import get_custom_object_api_client
+from common import RETRY_COUNTS_SHORT
 
 from backupstore import backupstore_delete_volume_cfg_file
 from backupstore import backupstore_cleanup
@@ -133,6 +142,7 @@ from backupstore import backupstore_get_backup_volume_prefix
 from backupstore import set_backupstore_url, set_backupstore_credential_secret, set_backupstore_poll_interval  # NOQA
 from backupstore import reset_backupstore_setting  # NOQA
 from backupstore import set_backupstore_s3, backupstore_get_secret  # NOQA
+from backupstore import backupstore_invalid # NOQA
 
 from kubernetes import client as k8sclient
 
@@ -341,7 +351,7 @@ def volume_basic_test(client, volume_name, backing_image=&#34;&#34;):  # NOQA
     volume = client.by_id_volume(volume_name)
     volume_rw_test(get_volume_endpoint(volume))
 
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = common.wait_for_volume_detached(client, volume_name)
     assert volume.restoreRequired is False
 
@@ -480,7 +490,7 @@ def snapshot_test(client, volume_name, backing_image):  # NOQA
     assert &#34;volume-head&#34; in snap.children.keys()
     assert snap.removed is True
 
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = common.wait_for_volume_detached(client, volume_name)
 
     volume.attach(hostId=lht_hostId, disableFrontend=True)
@@ -493,7 +503,7 @@ def snapshot_test(client, volume_name, backing_image):  # NOQA
 
     volume.snapshotRevert(name=snap2.name)
 
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = common.wait_for_volume_detached(client, volume_name)
 
     volume.attach(hostId=lht_hostId, disableFrontend=False)
@@ -572,12 +582,12 @@ def test_backup_status_for_unavailable_replicas(set_random_backupstore, client, 
     8. Cleanup (delete backups, delete volume)
     &#34;&#34;&#34;
     backup_status_for_unavailable_replicas_test(
-        client, volume_name, size=str(512 * Mi))
+        client, volume_name, size=3 * Gi)
 
 
 def backup_status_for_unavailable_replicas_test(client, volume_name,  # NOQA
                                                 size, backing_image=&#34;&#34;):  # NOQA
-    volume = create_and_check_volume(client, volume_name, 2, size,
+    volume = create_and_check_volume(client, volume_name, 2, str(size),
                                      backing_image)
 
     lht_hostId = get_self_host_id()
@@ -585,11 +595,12 @@ def backup_status_for_unavailable_replicas_test(client, volume_name,  # NOQA
     volume = common.wait_for_volume_healthy(client, volume_name)
 
     # write data to the volume
-    data = {
-        &#39;pos&#39;: 0,
-        &#39;content&#39;: common.generate_random_data(int(size)),
-    }
-    write_volume_data(volume, data)
+    volume_endpoint = get_volume_endpoint(volume)
+
+    # Take snapshots without overlapping
+    data_size = size/Mi
+    write_volume_dev_random_mb_data(
+        volume_endpoint, 0, data_size)
 
     # create a snapshot and backup
     snap = create_snapshot(client, volume_name)
@@ -736,6 +747,70 @@ def test_backup_block_deletion(set_random_backupstore, client, core_api, volume_
                                                 volume_name) == 0
 
     delete_backup_volume(client, volume_name)
+
+
+def test_dr_volume_activated_with_failed_replica(set_random_backupstore, client, core_api, volume_name):  # NOQA
+    &#34;&#34;&#34;
+    Test DR volume activated with a failed replica
+
+    Context:
+
+    Make sure that DR volume could be activated
+    as long as there is a ready replica.
+
+    Steps:
+
+    1.  Create a volume and attach to a node.
+    2.  Create a backup of the volume with writing some data.
+    3.  Create a DR volume from the backup.
+    4.  Disable the replica rebuilding.
+    5.  Enable the setting `allow-volume-creation-with-degraded-availability`
+    6.  Make a replica failed.
+    7.  Activate the DR volume.
+    8.  Enable the replica rebuilding.
+    9.  Attach the volume to a node.
+    10. Check if data is correct.
+    &#34;&#34;&#34;
+    backupstore_cleanup(client)
+
+    host_id = get_self_host_id()
+    vol = create_and_check_volume(client, volume_name, 2, SIZE)
+    vol.attach(hostId=host_id)
+    vol = common.wait_for_volume_healthy(client, volume_name)
+
+    data = {&#39;pos&#39;: 0, &#39;len&#39;: 2 * BACKUP_BLOCK_SIZE,
+            &#39;content&#39;: common.generate_random_data(2 * BACKUP_BLOCK_SIZE)}
+    _, backup, _, data = create_backup(client, volume_name, data)
+
+    dr_vol_name = &#34;dr-&#34; + volume_name
+    dr_vol = client.create_volume(name=dr_vol_name, size=SIZE,
+                                  numberOfReplicas=2, fromBackup=backup.url,
+                                  frontend=&#34;&#34;, standby=True)
+    check_volume_last_backup(client, dr_vol_name, backup.name)
+    wait_for_backup_restore_completed(client, dr_vol_name, backup.name)
+
+    common.update_setting(
+        client, common.SETTING_CONCURRENT_REPLICA_REBUILD_PER_NODE_LIMIT, &#34;0&#34;
+    )
+    common.update_setting(client, common.SETTING_DEGRADED_AVAILABILITY, &#34;true&#34;)
+
+    dr_vol = client.by_id_volume(dr_vol_name)
+    failed_replica = dr_vol.replicas[0]
+    crash_replica_processes(client, core_api, dr_vol_name,
+                            replicas=[failed_replica])
+    dr_vol = wait_for_volume_degraded(client, dr_vol_name)
+
+    activate_standby_volume(client, dr_vol_name)
+
+    common.update_setting(
+        client, common.SETTING_CONCURRENT_REPLICA_REBUILD_PER_NODE_LIMIT, &#34;5&#34;
+    )
+
+    dr_vol = client.by_id_volume(dr_vol_name)
+    dr_vol.attach(hostId=host_id)
+    dr_vol = common.wait_for_volume_healthy(client, dr_vol_name)
+
+    check_volume_data(dr_vol, data, False)
 
 
 def test_dr_volume_with_backup_block_deletion(set_random_backupstore, client, core_api, volume_name):  # NOQA
@@ -1274,18 +1349,19 @@ def test_backup(set_random_backupstore, client, volume_name):  # NOQA
     backup_test(client, volume_name, SIZE)
 
 
-def backup_test(client, volume_name, size, backing_image=&#34;&#34;):  # NOQA
+def backup_test(client, volume_name, size, backing_image=&#34;&#34;, compression_method=DEFAULT_BACKUP_COMPRESSION_METHOD):  # NOQA
     volume = create_and_check_volume(client, volume_name, 2, size,
                                      backing_image)
 
     lht_hostId = get_self_host_id()
     volume = volume.attach(hostId=lht_hostId)
     volume = common.wait_for_volume_healthy(client, volume_name)
+    assert volume.backupCompressionMethod == compression_method
 
-    backupstore_test(client, lht_hostId, volume_name, size)
+    backupstore_test(client, lht_hostId, volume_name, size, compression_method)
 
 
-def backupstore_test(client, host_id, volname, size):  # NOQA
+def backupstore_test(client, host_id, volname, size, compression_method):  # NOQA
     bv, b, snap2, data = create_backup(client, volname)
 
     # test restore
@@ -1301,11 +1377,12 @@ def backupstore_test(client, host_id, volname, size):  # NOQA
     assert volume.numberOfReplicas == 2
     assert volume.state == &#34;detached&#34;
     assert volume.restoreRequired is False
+    assert volume.backupCompressionMethod == compression_method
 
     volume = volume.attach(hostId=host_id)
     volume = common.wait_for_volume_healthy(client, restore_name)
     check_volume_data(volume, data)
-    volume = volume.detach(hostId=&#34;&#34;)
+    volume = volume.detach()
     volume = common.wait_for_volume_detached(client, restore_name)
 
     delete_backup(client, bv.name, b.name)
@@ -1537,7 +1614,7 @@ def restore_inc_test(client, core_api, volume_name, pod):  # NOQA
     check_volume_data(sb_volume2, data0_modified2, False)
 
     # allocated this active volume to a pod
-    sb_volume2.detach(hostId=&#34;&#34;)
+    sb_volume2.detach()
     sb_volume2 = common.wait_for_volume_detached(client, sb_volume2_name)
 
     create_pv_for_volume(client, core_api, sb_volume2, sb_volume2_name)
@@ -1748,17 +1825,17 @@ def test_listing_backup_volume(client, backing_image=&#34;&#34;):   # NOQA
     common.delete_backup_volume(client, volume3_name)
     common.wait_for_backup_volume_delete(client, volume3_name)
 
-    volume1.detach(hostId=&#34;&#34;)
+    volume1.detach()
     volume1 = common.wait_for_volume_detached(client, volume1_name)
     client.delete(volume1)
     wait_for_volume_delete(client, volume1_name)
 
-    volume2.detach(hostId=&#34;&#34;)
+    volume2.detach()
     volume2 = common.wait_for_volume_detached(client, volume2_name)
     client.delete(volume2)
     wait_for_volume_delete(client, volume2_name)
 
-    volume3.detach(hostId=&#34;&#34;)
+    volume3.detach()
     volume3 = common.wait_for_volume_detached(client, volume3_name)
     client.delete(volume3)
     wait_for_volume_delete(client, volume3_name)
@@ -1789,7 +1866,7 @@ def test_volume_multinode(client, volume_name):  # NOQA
                                                 volume_name)
         engine = get_volume_engine(volume)
         assert engine.hostId == host_id
-        volume = volume.detach(hostId=&#34;&#34;)
+        volume = volume.detach()
         volume = common.wait_for_volume_detached(client,
                                                  volume_name)
 
@@ -1798,6 +1875,61 @@ def test_volume_multinode(client, volume_name):  # NOQA
 
     volumes = client.list_volume()
     assert len(volumes) == 0
+
+
+@pytest.mark.skip(reason=&#34;TODO&#34;)
+def test_pvc_storage_class_name_from_backup_volume(): # NOQA
+    &#34;&#34;&#34;
+    Test the storageClasName of the restored volume&#39;s PV/PVC
+    should be from the backup volume
+
+    Given
+    - Create a new StorageClass
+      ```
+      kind: StorageClass
+      apiVersion: storage.k8s.io/v1
+      metadata:
+        name: longhorn-sc-name-recorded
+      provisioner: driver.longhorn.io
+      allowVolumeExpansion: true
+      reclaimPolicy: Delete
+      volumeBindingMode: Immediate
+      parameters:
+        numberOfReplicas: &#34;3&#34;
+        staleReplicaTimeout: &#34;2880&#34;
+      ```
+    - Create a PVC to use this SC
+      ```
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: test-pvc
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: longhorn-sc-name-recorded
+        resources:
+          requests:
+            storage: 5Gi
+      ```
+    - Attach the Volume and write some data
+
+    When
+    - Backup the Volume
+
+    Then
+    - the backupvolume&#39;s status.storageClassName should be
+      longhorn-sc-name-recorded
+
+    When
+    - Restore the backup to a new volume
+    - Create PV/PVC from the new volume with create new PVC option
+
+    Then
+    - The new PVC&#39;s storageClassName should still be longhorn-sc-name-recorded
+    - Verify the restored data is the same as original one
+    &#34;&#34;&#34;
+    pass
 
 
 @pytest.mark.coretest  # NOQA
@@ -1851,7 +1983,7 @@ def test_volume_scheduling_failure(client, volume_name):  # NOQA
     endpoint = get_volume_endpoint(volume)
     volume_rw_test(endpoint)
 
-    volume = volume.detach(hostId=&#34;&#34;)
+    volume = volume.detach()
     volume = common.wait_for_volume_detached(client, volume_name)
 
     client.delete(volume)
@@ -1959,7 +2091,7 @@ def test_attach_without_frontend(client, volume_name):  # NOQA
     write_volume_random_data(volume)
     create_snapshot(client, volume_name)
 
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = common.wait_for_volume_detached(client, volume_name)
 
     volume.attach(hostId=lht_hostId, disableFrontend=True)
@@ -1972,7 +2104,7 @@ def test_attach_without_frontend(client, volume_name):  # NOQA
 
     volume.snapshotRevert(name=snap1.name)
 
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = common.wait_for_volume_detached(client, volume_name)
 
     volume.attach(hostId=lht_hostId, disableFrontend=False)
@@ -2169,7 +2301,7 @@ def test_expansion_basic(client, volume_name):  # NOQA
     create_snapshot(client, volume_name)
     check_volume_data(volume, snap3_data)
 
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = common.wait_for_volume_detached(client, volume_name)
 
     volume.attach(hostId=lht_hostId, disableFrontend=False)
@@ -2177,7 +2309,7 @@ def test_expansion_basic(client, volume_name):  # NOQA
     volume = client.by_id_volume(volume_name)
     check_block_device_size(volume, int(EXPAND_SIZE))
     check_volume_data(volume, snap3_data)
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = common.wait_for_volume_detached(client, volume_name)
 
     volume.attach(hostId=lht_hostId, disableFrontend=True)
@@ -2186,7 +2318,7 @@ def test_expansion_basic(client, volume_name):  # NOQA
     assert volume.frontend == VOLUME_FRONTEND_BLOCKDEV
     check_volume_endpoint(volume)
     volume.snapshotRevert(name=snap2.name)
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = common.wait_for_volume_detached(client, volume_name)
     volume.attach(hostId=lht_hostId, disableFrontend=False)
     common.wait_for_volume_healthy(client, volume_name)
@@ -2199,13 +2331,13 @@ def test_expansion_basic(client, volume_name):  # NOQA
     snap4_data = write_volume_data(volume, snap4_data)
     create_snapshot(client, volume_name)
     check_volume_data(volume, snap4_data)
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = common.wait_for_volume_detached(client, volume_name)
 
     volume.attach(hostId=lht_hostId, disableFrontend=True)
     volume = common.wait_for_volume_healthy_no_frontend(client, volume_name)
     volume.snapshotRevert(name=snap1.name)
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = common.wait_for_volume_detached(client, volume_name)
     volume.attach(hostId=lht_hostId, disableFrontend=False)
     common.wait_for_volume_healthy(client, volume_name)
@@ -2235,7 +2367,7 @@ def test_expansion_with_size_round_up(client, core_api, volume_name):  # NOQA
     test_data = write_volume_random_data(volume)
 
     # Step 2: Offline expansion
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = wait_for_volume_detached(client, volume_name)
     volume.expand(size=&#34;2000000000&#34;)
     wait_for_volume_expansion(client, volume_name)
@@ -2405,7 +2537,7 @@ def test_restore_inc_with_offline_expansion(set_random_backupstore, client, core
     check_volume_data(dr_volume2, data2)
 
     # allocated this active volume to a pod
-    dr_volume2.detach(hostId=&#34;&#34;)
+    dr_volume2.detach()
     dr_volume2 = common.wait_for_volume_detached(client, dr_volume2_name)
 
     create_pv_for_volume(client, core_api, dr_volume2, dr_volume2_name)
@@ -2449,9 +2581,9 @@ def test_restore_inc_with_offline_expansion(set_random_backupstore, client, core
     delete_and_wait_pv(core_api, dr_volume2_name)
 
     # cleanup
-    std_volume.detach(hostId=&#34;&#34;)
-    dr_volume0.detach(hostId=&#34;&#34;)
-    dr_volume1.detach(hostId=&#34;&#34;)
+    std_volume.detach()
+    dr_volume0.detach()
+    dr_volume1.detach()
     std_volume = common.wait_for_volume_detached(client, volume_name)
     dr_volume0 = common.wait_for_volume_detached(client, dr_volume0_name)
     dr_volume1 = common.wait_for_volume_detached(client, dr_volume1_name)
@@ -2522,7 +2654,7 @@ def test_engine_image_daemonset_restart(client, apps_api, volume_name):  # NOQA
 
 
 @pytest.mark.coretest  # NOQA
-def test_expansion_canceling(client, core_api, volume_name, pod):  # NOQA
+def test_expansion_canceling(client, core_api, volume_name, pod, pvc, storage_class):  # NOQA
     &#34;&#34;&#34;
     Test expansion canceling
 
@@ -2543,20 +2675,27 @@ def test_expansion_canceling(client, core_api, volume_name, pod):  # NOQA
     13. Validate the volume content, then check if data writing looks fine
     14. Clean up pod, PVC, and PV
     &#34;&#34;&#34;
-    expansion_pvc_name = &#34;pvc-&#34; + volume_name
-    expansion_pv_name = &#34;pv-&#34; + volume_name
-    pod_name = &#34;pod-&#34; + volume_name
-    volume = create_and_check_volume(client, volume_name, 2, SIZE)
-    create_pv_for_volume(client, core_api, volume, expansion_pv_name)
-    create_pvc_for_volume(client, core_api, volume, expansion_pvc_name)
+    storage_class[&#39;parameters&#39;][&#39;numberOfReplicas&#39;] = &#34;2&#34;
+    create_storage_class(storage_class)
+
+    pod_name = &#39;expand-canceling-test&#39;
+    expansion_pvc_name = pod_name + &#34;-pvc&#34;
+    pvc[&#39;metadata&#39;][&#39;name&#39;] = expansion_pvc_name
+    pvc[&#39;spec&#39;][&#39;storageClassName&#39;] = storage_class[&#39;metadata&#39;][&#39;name&#39;]
+    pvc[&#39;spec&#39;][&#39;resources&#39;][&#39;requests&#39;][&#39;storage&#39;] = SIZE
+    common.create_pvc(pvc)
+
     pod[&#39;metadata&#39;][&#39;name&#39;] = pod_name
     pod[&#39;spec&#39;][&#39;volumes&#39;] = [{
         &#39;name&#39;: pod[&#39;spec&#39;][&#39;containers&#39;][0][&#39;volumeMounts&#39;][0][&#39;name&#39;],
-        &#39;persistentVolumeClaim&#39;: {
-            &#39;claimName&#39;: expansion_pvc_name,
-        },
+        &#39;persistentVolumeClaim&#39;: {&#39;claimName&#39;: expansion_pvc_name},
     }]
     create_and_wait_pod(core_api, pod)
+
+    pv = common.wait_and_get_pv_for_pvc(core_api, expansion_pvc_name)
+    assert pv.status.phase == &#34;Bound&#34;
+    expansion_pv_name = pv.metadata.name
+    volume_name = pv.spec.csi.volume_handle
 
     # Step 3: Prepare to fail offline expansion for one replica
     volume = client.by_id_volume(volume_name)
@@ -2770,7 +2909,7 @@ def test_running_volume_with_scheduling_failure(
 
 @pytest.mark.coretest  # NOQA
 def test_expansion_with_scheduling_failure(
-        client, core_api, volume_name, pod):  # NOQA
+        client, core_api, volume_name, pod, pvc, storage_class):  # NOQA
     &#34;&#34;&#34;
     Test if the running volume with scheduling failure
     can be expanded after the detachment.
@@ -2815,22 +2954,27 @@ def test_expansion_with_scheduling_failure(
     client.update(replica_node_soft_anti_affinity_setting, value=&#34;false&#34;)
 
     data_path1 = &#34;/data/test1&#34;
-    test_pv_name = &#34;pv-&#34; + volume_name
-    test_pvc_name = &#34;pvc-&#34; + volume_name
-    test_pod_name = &#34;pod-&#34; + volume_name
+    pvc[&#39;spec&#39;][&#39;resources&#39;][&#39;requests&#39;][&#39;storage&#39;] = str(300 * Mi)
+    create_storage_class(storage_class)
 
-    volume = create_and_check_volume(client, volume_name, size=str(300 * Mi))
-    create_pv_for_volume(client, core_api, volume, test_pv_name)
-    create_pvc_for_volume(client, core_api, volume, test_pvc_name)
+    test_pod_name = &#39;expand-scheduling-failed-test&#39;
+    test_pvc_name = test_pod_name + &#34;-pvc&#34;
+    pvc[&#39;metadata&#39;][&#39;name&#39;] = test_pvc_name
+    pvc[&#39;spec&#39;][&#39;storageClassName&#39;] = storage_class[&#39;metadata&#39;][&#39;name&#39;]
+    common.create_pvc(pvc)
 
     pod[&#39;metadata&#39;][&#39;name&#39;] = test_pod_name
     pod[&#39;spec&#39;][&#39;volumes&#39;] = [{
         &#39;name&#39;: pod[&#39;spec&#39;][&#39;containers&#39;][0][&#39;volumeMounts&#39;][0][&#39;name&#39;],
-        &#39;persistentVolumeClaim&#39;: {
-            &#39;claimName&#39;: test_pvc_name,
-        },
+        &#39;persistentVolumeClaim&#39;: {&#39;claimName&#39;: test_pvc_name},
     }]
     create_and_wait_pod(core_api, pod)
+
+    pv = common.wait_and_get_pv_for_pvc(core_api, test_pvc_name)
+    assert pv.status.phase == &#34;Bound&#34;
+    test_pv_name = pv.metadata.name
+    volume_name = pv.spec.csi.volume_handle
+
     wait_for_volume_healthy(client, volume_name)
     write_pod_volume_random_data(core_api, test_pod_name,
                                  data_path1, DATA_SIZE_IN_MB_1)
@@ -2892,7 +3036,7 @@ def test_expansion_with_scheduling_failure(
 
     expanded_size = str(400 * Mi)
     volume.expand(size=expanded_size)
-    wait_for_volume_expansion(client, volume_name)
+    wait_for_volume_expansion(client, volume_name, expanded_size)
     volume = wait_for_volume_detached(client, volume_name)
     assert volume.size == expanded_size
     assert len(volume.replicas) == 2
@@ -2946,6 +3090,9 @@ def test_backup_lock_deletion_during_restoration(set_random_backupstore, client,
     10. Assert the data from the restored volume with md5sum.
     11. Assert the backup count in the backup store with 0.
     &#34;&#34;&#34;
+    common.update_setting(client,
+                          common.SETTING_DEGRADED_AVAILABILITY, &#34;false&#34;)
+
     backupstore_cleanup(client)
     std_volume_name = volume_name + &#34;-std&#34;
     restore_volume_name = volume_name + &#34;-restore&#34;
@@ -3014,6 +3161,9 @@ def test_backup_lock_deletion_during_backup(set_random_backupstore, client, core
     11. Restore the latest backup.
     12. Wait for the restoration to be completed. Assert md5sum from step 6.
     &#34;&#34;&#34;
+    common.update_setting(client,
+                          common.SETTING_DEGRADED_AVAILABILITY, &#34;false&#34;)
+
     backupstore_cleanup(client)
     std_volume_name = volume_name + &#34;-std&#34;
     restore_volume_name_1 = volume_name + &#34;-restore-1&#34;
@@ -3274,7 +3424,7 @@ def test_allow_volume_creation_with_degraded_availability(client, volume_name): 
     data = write_volume_random_data(volume, {})
 
     # detach volume
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = common.wait_for_volume_detached(client, volume_name)
     assert volume.conditions[VOLUME_CONDITION_SCHEDULED][&#39;status&#39;] == &#34;True&#34;
 
@@ -3290,7 +3440,7 @@ def test_allow_volume_creation_with_degraded_availability(client, volume_name): 
                                                &#34;status&#34;, &#34;True&#34;)
 
     # detach and re-attach the volume to verify the data
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = common.wait_for_volume_detached(client, volume_name)
 
     volume.attach(hostId=self_host)
@@ -3369,7 +3519,7 @@ def test_allow_volume_creation_with_degraded_availability_error(client, volume_n
     data = write_volume_random_data(volume, {})
 
     # detach and re-attach the volume to verify the data
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = common.wait_for_volume_detached(client, volume_name)
 
     volume.attach(hostId=self_host)
@@ -3730,7 +3880,7 @@ def test_volume_toomanysnapshots_condition(client, core_api, volume_name):  # NO
 
         if count &lt; max_count:
             volume = client.by_id_volume(volume_name)
-            assert volume.conditions.toomanysnapshots.status == &#34;False&#34;
+            assert volume.conditions.TooManySnapshots.status == &#34;False&#34;
         else:
             wait_for_volume_condition_toomanysnapshots(client, volume_name,
                                                        &#34;status&#34;, &#34;True&#34;)
@@ -4005,7 +4155,7 @@ def test_expand_pvc_with_size_round_up(client, core_api, volume_name):  # NOQA
     volume.attach(hostId=self_hostId, disableFrontend=False)
     volume = wait_for_volume_healthy(client, volume_name)
     test_data = write_volume_random_data(volume)
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = wait_for_volume_detached(client, volume_name)
 
     volume.expand(size=&#34;2000000000&#34;)
@@ -4024,7 +4174,7 @@ def test_expand_pvc_with_size_round_up(client, core_api, volume_name):  # NOQA
 
     volume = client.by_id_volume(volume_name)
     assert volume.size == &#34;2000683008&#34;
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = wait_for_volume_detached(client, volume_name)
 
     self_hostId = get_self_host_id()
@@ -4032,7 +4182,7 @@ def test_expand_pvc_with_size_round_up(client, core_api, volume_name):  # NOQA
     volume = wait_for_volume_healthy(client, volume_name)
     check_volume_data(volume, test_data, False)
     test_data = write_volume_random_data(volume)
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = wait_for_volume_detached(client, volume_name)
 
     volume.expand(size=str(2 * Gi))
@@ -4051,14 +4201,14 @@ def test_expand_pvc_with_size_round_up(client, core_api, volume_name):  # NOQA
 
     volume = client.by_id_volume(volume_name)
     assert volume.size == &#34;2147483648&#34;
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = wait_for_volume_detached(client, volume_name)
 
     self_hostId = get_self_host_id()
     volume.attach(hostId=self_hostId, disableFrontend=False)
     volume = wait_for_volume_healthy(client, volume_name)
     check_volume_data(volume, test_data, False)
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = wait_for_volume_detached(client, volume_name)
 
     client.delete(volume)
@@ -4192,31 +4342,31 @@ def test_aws_iam_role_arn(client, core_api):  # NOQA
     Test AWS IAM Role ARN
 
     1. Set backup target to S3
-    2. Check longhorn manager and replica instance manager Pods
+    2. Check longhorn manager and aio instance manager Pods
        without &#39;iam.amazonaws.com/role&#39; annotation
     3. Add AWS_IAM_ROLE_ARN to secret
-    4. Check longhorn manager and replica instance manager Pods
+    4. Check longhorn manager and aio instance manager Pods
        with &#39;iam.amazonaws.com/role&#39; annotation
        and matches to AWS_IAM_ROLE_ARN in secret
     5. Update AWS_IAM_ROLE_ARN from secret
-    6. Check longhorn manager and replica instance manager Pods
+    6. Check longhorn manager and aio instance manager Pods
        with &#39;iam.amazonaws.com/role&#39; annotation
        and matches to AWS_IAM_ROLE_ARN in secret
     7. Remove AWS_IAM_ROLE_ARN from secret
-    8. Check longhorn manager and replica instance manager Pods
+    8. Check longhorn manager and aio instance manager Pods
        without &#39;iam.amazonaws.com/role&#39; annotation
     &#34;&#34;&#34;
     set_backupstore_s3(client)
 
     lh_label = &#39;app=longhorn-manager&#39;
-    replica_im_label = &#39;longhorn.io/instance-manager-type=replica&#39;
+    im_label = &#39;longhorn.io/instance-manager-type=aio&#39;
     anno_key = &#39;iam.amazonaws.com/role&#39;
     secret_name = backupstore_get_secret(client)
 
     common.wait_for_pod_annotation(
         core_api, lh_label, anno_key, None)
     common.wait_for_pod_annotation(
-        core_api, replica_im_label, anno_key, None)
+        core_api, im_label, anno_key, None)
 
     # Add secret key AWS_IAM_ROLE_ARN value test-aws-iam-role-arn
     secret = core_api.read_namespaced_secret(
@@ -4228,7 +4378,7 @@ def test_aws_iam_role_arn(client, core_api):  # NOQA
     common.wait_for_pod_annotation(
         core_api, lh_label, anno_key, &#39;test-aws-iam-role-arn&#39;)
     common.wait_for_pod_annotation(
-        core_api, replica_im_label, anno_key, &#39;test-aws-iam-role-arn&#39;)
+        core_api, im_label, anno_key, &#39;test-aws-iam-role-arn&#39;)
 
     # Update secret key AWS_IAM_ROLE_ARN value test-aws-iam-role-arn-2
     secret = core_api.read_namespaced_secret(
@@ -4240,7 +4390,7 @@ def test_aws_iam_role_arn(client, core_api):  # NOQA
     common.wait_for_pod_annotation(
         core_api, lh_label, anno_key, &#39;test-aws-iam-role-arn-2&#39;)
     common.wait_for_pod_annotation(
-        core_api, replica_im_label, anno_key, &#39;test-aws-iam-role-arn-2&#39;)
+        core_api, im_label, anno_key, &#39;test-aws-iam-role-arn-2&#39;)
 
     # Remove secret key AWS_IAM_ROLE_ARN
     body = [{&#34;op&#34;: &#34;remove&#34;, &#34;path&#34;: &#34;/data/AWS_IAM_ROLE_ARN&#34;}]
@@ -4250,7 +4400,7 @@ def test_aws_iam_role_arn(client, core_api):  # NOQA
     common.wait_for_pod_annotation(
         core_api, lh_label, anno_key, None)
     common.wait_for_pod_annotation(
-        core_api, replica_im_label, anno_key, None)
+        core_api, im_label, anno_key, None)
 
 
 @pytest.mark.coretest   # NOQA
@@ -4394,7 +4544,6 @@ def test_default_storage_class_syncup(core_api, request):  # NOQA
                 print(e)
             finally:
                 time.sleep(RETRY_INTERVAL)
-        longhorn_storage_class = storage_api.read_storage_class(&#34;longhorn&#34;)
         assert longhorn_storage_class.allow_volume_expansion is allow_exp
 
     def finalizer():
@@ -4424,25 +4573,34 @@ def test_default_storage_class_syncup(core_api, request):  # NOQA
 
     # step 3
     for i in range(RETRY_COMMAND_COUNT):
-        longhorn_storage_class = storage_api.read_storage_class(&#34;longhorn&#34;)
-        storage_class_data = \
-            yaml.safe_load(longhorn_storage_class.
-                           metadata.
-                           annotations[&#34;longhorn.io/last-applied-configmap&#34;])
-
-        if storage_class_data[&#34;reclaimPolicy&#34;] == \
-                config_map_data[&#34;reclaimPolicy&#34;]:
-            break
-
-        time.sleep(RETRY_INTERVAL)
+        try:
+            longhorn_storage_class = storage_api.read_storage_class(&#34;longhorn&#34;)
+            storage_class_data = \
+                yaml.safe_load(longhorn_storage_class.
+                               metadata.
+                               annotations[&#34;longhorn.io/last-applied-configmap&#34;]) # NOQA
+            if storage_class_data[&#34;reclaimPolicy&#34;] == \
+                    config_map_data[&#34;reclaimPolicy&#34;]:
+                break
+        except Exception as e:
+            print(e)
+        finally:
+            time.sleep(RETRY_INTERVAL)
 
     assert storage_class_data[&#34;reclaimPolicy&#34;] == \
         config_map_data[&#34;reclaimPolicy&#34;]
 
     # step 4
-    storage_api.delete_storage_class(&#34;longhorn&#34;)
-    for item in storage_api.list_storage_class().items:
-        assert item.metadata.name != &#34;longhorn&#34;
+    for i in range(RETRY_COMMAND_COUNT):
+        try:
+            storage_api.delete_storage_class(&#34;longhorn&#34;)
+            for item in storage_api.list_storage_class().items:
+                assert item.metadata.name != &#34;longhorn&#34;
+            break
+        except Exception as e:
+            print(e)
+        finally:
+            time.sleep(RETRY_INTERVAL)
 
     # step 5
     storage_class_recreated = False
@@ -4619,7 +4777,7 @@ def snapshot_prune_test(client, volume_name, backing_image):  # NOQA
     create_snapshot(client, volume_name)
 
     # Prepare to do revert
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = common.wait_for_volume_detached(client, volume_name)
     volume.attach(hostId=lht_hostId, disableFrontend=True)
     volume = common.wait_for_volume_healthy_no_frontend(client, volume_name)
@@ -4631,7 +4789,7 @@ def snapshot_prune_test(client, volume_name, backing_image):  # NOQA
         volume.snapshotRevert(name=snap3_after.name)
     # Reverting to snap4 should succeed
     volume.snapshotRevert(name=snap4.name)
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = common.wait_for_volume_detached(client, volume_name)
     volume.attach(hostId=lht_hostId, disableFrontend=False)
     common.wait_for_volume_healthy(client, volume_name)
@@ -4978,7 +5136,7 @@ def test_backup_failed_disable_auto_cleanup(set_random_backupstore,  # NOQA
     9.    Wait and check if the backup was not deleted.
     10.   Cleanup
     &#34;&#34;&#34;
-    backup_name = backup_failed_cleanup(client, core_api, volume_name, 256*Mi,
+    backup_name = backup_failed_cleanup(client, core_api, volume_name, 1024*Mi,
                                         failed_backup_ttl=&#34;0&#34;)
 
     # wait for 5 minutes to check if the failed backup exists
@@ -5002,7 +5160,6 @@ def test_backup_volume_restore_with_access_mode(core_api, # NOQA
                                                 client, # NOQA
                                                 access_mode, # NOQA
                                        overridden_restored_access_mode): # NOQA
-
     &#34;&#34;&#34;
     Test the backup w/ the volume access mode, then restore a volume w/ the
      original access mode or being overridden.
@@ -5049,8 +5206,7 @@ def test_backup_volume_restore_with_access_mode(core_api, # NOQA
     assert volume_sp_access_mode.accessMode == overridden_restored_access_mode
 
 
-@pytest.mark.skip(reason=&#34;TODO&#34;)  # NOQA
-def test_delete_backup_during_restoring_volume():  # NOQA
+def test_delete_backup_during_restoring_volume(set_random_backupstore, client):  # NOQA
     &#34;&#34;&#34;
     Test delete backup during restoring volume
 
@@ -5059,23 +5215,45 @@ def test_delete_backup_during_restoring_volume():  # NOQA
     The volume robustness should be faulted if the backup was deleted during
     restoring the volume.
 
-    Setup:
-
-    1. Create a volume v1 and attach to a node
-    2. Write some data (&gt;100M) to volume v1
-
-    Steps:
-
-    1. Create a backup of volume v1
-    2. Wait for that backup is completed
-    3. Start to restore a volume v2 from this backup
-       (Not wait for restoration completed)
-    4. Delete the backup immediately
-    5. Check that volume v2 &#34;robustness&#34; is &#34;faulted&#34; and
-       the status of volume restore condition is &#34;False&#34;,
-       the reason of volume restore condition is &#34;RestoreFailure&#34;
+    1. Given create volume v1 and attach to a node
+       And write data 150M to volume v1
+    2. When create a backup of volume v1
+       And wait for that backup is completed
+       And restore a volume v2 from volume v1 backup
+       And delete the backup immediately
+    3. Then volume v2 &#34;robustness&#34; should be &#34;faulted&#34;
+       And &#34;status&#34; of volume restore condition should be &#34;False&#34;,
+       And &#34;reason&#34; of volume restore condition should be &#34;RestoreFailure&#34;
     &#34;&#34;&#34;
-    pass
+    # Step 1
+    vol_v1_name = &#34;vol-v1&#34;
+    vol_v1 = create_and_check_volume(client, vol_v1_name, size=str(512 * Mi))
+    vol_v1.attach(hostId=get_self_host_id())
+    vol_v1 = wait_for_volume_healthy(client, vol_v1_name)
+
+    vol_v1_endpoint = get_volume_endpoint(vol_v1)
+    write_volume_dev_random_mb_data(vol_v1_endpoint, 1, 150)
+
+    # Step 2
+    bv, b, snap2, data = create_backup(client, vol_v1_name)
+
+    vol_v2_name = &#34;vol-v2&#34;
+    client.create_volume(name=vol_v2_name,
+                         size=str(512 * Mi),
+                         numberOfReplicas=3,
+                         fromBackup=b.url)
+
+    delete_backup(client, bv.name, b.name)
+    volume = wait_for_volume_status(client, vol_v1_name,
+                                    &#34;lastBackup&#34;, &#34;&#34;)
+    assert volume.lastBackupAt == &#34;&#34;
+
+    # Step 3
+    wait_for_volume_faulted(client, vol_v2_name)
+    wait_for_volume_condition_restore(client, vol_v2_name,
+                                      &#34;status&#34;, &#34;False&#34;)
+    wait_for_volume_condition_restore(client, vol_v2_name,
+                                      &#34;reason&#34;, &#34;RestoreFailure&#34;)
 
 
 @pytest.mark.parametrize(&#34;fs_type&#34;, [FS_TYPE_EXT4, FS_TYPE_XFS])  # NOQA
@@ -5161,7 +5339,7 @@ def test_filesystem_trim(client, fs_type):  # NOQA
         client, test_volume_name)
     volume.snapshotRevert(name=snap0_origin.name)
 
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = wait_for_volume_detached(client, test_volume_name)
     volume.attach(hostId=host_id)
     common.wait_for_volume_healthy(client, test_volume_name)
@@ -5334,7 +5512,7 @@ def test_filesystem_trim(client, fs_type):  # NOQA
         client, test_volume_name)
     volume.snapshotRevert(name=snap21_origin.name)
 
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = wait_for_volume_detached(client, test_volume_name)
     volume.attach(hostId=host_id)
     common.wait_for_volume_healthy(client, test_volume_name)
@@ -5351,7 +5529,162 @@ def test_filesystem_trim(client, fs_type):  # NOQA
     subprocess.check_call([&#34;rm&#34;, &#34;-rf&#34;, mnt_path])
 
     client.delete(volume)
-    wait_for_volume_delete(client, test_volume_name)</code></pre>
+    wait_for_volume_delete(client, test_volume_name)
+
+
+def test_backuptarget_invalid(apps_api, # NOQA
+                              client, # NOQA
+                              core_api, # NOQA
+                              backupstore_invalid, # NOQA
+                              make_deployment_with_pvc, # NOQA
+                              pvc_name, # NOQA
+                              request, # NOQA
+                              volume_name): # NOQA
+    &#34;&#34;&#34;
+    Related issue :
+    https://github.com/longhorn/longhorn/issues/1249
+
+    This test case does not cover the UI test mentioned in the related issue&#39;s
+    test steps.&#34;
+
+    Setup
+    - Give an incorrect value to Backup target.
+
+    Given
+    - Create a volume, attach it to a workload, write data into the volume.
+
+    When
+    - Create a backup by a manifest yaml file
+
+    Then
+    - Backup will be failed and the backup state is Error.
+    &#34;&#34;&#34;
+    volume = create_and_check_volume(client, volume_name)
+    pvc_name = volume_name + &#34;-pvc&#34;
+    create_pv_for_volume(client, core_api, volume, volume_name)
+    create_pvc_for_volume(client, core_api, volume, pvc_name)
+
+    deployment_name = volume_name + &#34;-dep&#34;
+    deployment = make_deployment_with_pvc(deployment_name, pvc_name)
+    create_and_wait_deployment(apps_api, deployment)
+
+    pod_names = common.get_deployment_pod_names(core_api, deployment)
+    write_pod_volume_random_data(core_api, pod_names[0], &#34;/data/test&#34;,
+                                 DATA_SIZE_IN_MB_1)
+
+    volume = client.by_id_volume(volume_name)
+    snap = create_snapshot(client, volume_name)
+    volume.snapshotBackup(name=snap.name)
+
+    for i in range(RETRY_COUNTS_SHORT):
+        api = get_custom_object_api_client()
+        backups = api.list_namespaced_custom_object(&#34;longhorn.io&#34;,
+                                                    &#34;v1beta2&#34;,
+                                                    &#34;longhorn-system&#34;,
+                                                    &#34;backups&#34;)
+
+        if backups[&#34;items&#34;][0][&#34;status&#34;][&#34;state&#34;] != &#34;&#34;:
+            break
+        time.sleep(RETRY_INTERVAL)
+
+    assert backups[&#34;items&#34;][0][&#34;spec&#34;][&#34;snapshotName&#34;] == snap.name
+    assert backups[&#34;items&#34;][0][&#34;status&#34;][&#34;state&#34;] == &#34;Error&#34;
+
+
+@pytest.mark.volume_backup_restore   # NOQA
+def test_volume_backup_and_restore_with_lz4_compression_method(client, set_random_backupstore, volume_name):  # NOQA
+    &#34;&#34;&#34;
+    Scenario: test volume backup and restore with different compression methods
+
+    Issue: https://github.com/longhorn/longhorn/issues/5189
+
+    Given setup Backup Compression Method is &#34;lz4&#34;
+    And setup backup concurrent limit is &#34;4&#34;
+    And setup restore concurrent limit is &#34;4&#34;
+
+    When create a volume and attach to the current node
+    And get the volume&#39;s details
+    Then verify the volume&#39;s compression method is &#34;lz4&#34;
+
+    Then Create a backup of volume
+    And Write volume random data
+    Then restore the backup to a new volume
+    And Attach the new volume and verify the data integrity
+    Then Detach the volume and delete the backup
+    And Wait for the restored volume&#39;s `lastBackup` to be cleaned
+    (due to remove the backup)
+    And Delete the volume
+    &#34;&#34;&#34;
+    common.update_setting(client, common.SETTING_BACKUP_COMPRESSION_METHOD,
+                          BACKUP_COMPRESSION_METHOD_LZ4)
+    common.update_setting(client, common.SETTING_BACKUP_CONCURRENT_LIMIT, &#34;4&#34;)
+    common.update_setting(client, common.SETTING_RESTORE_CONCURRENT_LIMIT, &#34;4&#34;)
+    backup_test(client, volume_name, SIZE,
+                compression_method=BACKUP_COMPRESSION_METHOD_LZ4)
+
+
+@pytest.mark.volume_backup_restore   # NOQA
+def test_volume_backup_and_restore_with_gzip_compression_method(client, set_random_backupstore, volume_name):  # NOQA
+    &#34;&#34;&#34;
+    Scenario: test volume backup and restore with different compression methods
+
+    Issue: https://github.com/longhorn/longhorn/issues/5189
+
+    Given setup Backup Compression Method is &#34;gzip&#34;
+    And setup backup concurrent limit is &#34;4&#34;
+    And setup restore concurrent limit is &#34;4&#34;
+
+    When create a volume and attach to the current node
+    And get the volume&#39;s details
+    Then verify the volume&#39;s compression method is &#34;gzip&#34;
+
+    Then Create a backup of volume
+    And Write volume random data
+    Then restore the backup to a new volume
+    And Attach the new volume and verify the data integrity
+    And Detach the volume and delete the backup
+    And Wait for the restored volume&#39;s `lastBackup` to be cleaned
+    (due to remove the backup)
+    And Delete the volume
+    &#34;&#34;&#34;
+    common.update_setting(client, common.SETTING_BACKUP_COMPRESSION_METHOD,
+                          BACKUP_COMPRESSION_METHOD_GZIP)
+    common.update_setting(client, common.SETTING_BACKUP_CONCURRENT_LIMIT, &#34;4&#34;)
+    common.update_setting(client, common.SETTING_RESTORE_CONCURRENT_LIMIT, &#34;4&#34;)
+    backup_test(client, volume_name, SIZE,
+                compression_method=BACKUP_COMPRESSION_METHOD_GZIP)
+
+
+@pytest.mark.volume_backup_restore   # NOQA
+def test_volume_backup_and_restore_with_none_compression_method(client, set_random_backupstore, volume_name):  # NOQA
+    &#34;&#34;&#34;
+    Scenario: test volume backup and restore with different compression methods
+
+    Issue: https://github.com/longhorn/longhorn/issues/5189
+
+    Given setup Backup Compression Method is &#34;none&#34;
+    And setup backup concurrent limit is &#34;4&#34;
+    And setup restore concurrent limit is &#34;4&#34;
+
+    When create a volume and attach to the current node
+    And get the volume&#39;s details
+    Then verify the volume&#39;s compression method is &#34;none&#34;
+
+    Then Create a backup of volume
+    And Write volume random data
+    Then restore the backup to a new volume
+    And Attach the new volume and verify the data integrity
+    And Detach the volume and delete the backup
+    And Wait for the restored volume&#39;s `lastBackup` to be cleaned
+    (due to remove the backup)
+    And Delete the volume
+    &#34;&#34;&#34;
+    common.update_setting(client, common.SETTING_BACKUP_COMPRESSION_METHOD,
+                          BACKUP_COMPRESSION_METHOD_NONE)
+    common.update_setting(client, common.SETTING_BACKUP_CONCURRENT_LIMIT, &#34;4&#34;)
+    common.update_setting(client, common.SETTING_RESTORE_CONCURRENT_LIMIT, &#34;4&#34;)
+    backup_test(client, volume_name, SIZE,
+                compression_method=BACKUP_COMPRESSION_METHOD_NONE)</code></pre>
 </details>
 </section>
 <section>
@@ -5479,7 +5812,7 @@ def test_filesystem_trim(client, fs_type):  # NOQA
 </summary>
 <pre><code class="python">def backup_status_for_unavailable_replicas_test(client, volume_name,  # NOQA
                                                 size, backing_image=&#34;&#34;):  # NOQA
-    volume = create_and_check_volume(client, volume_name, 2, size,
+    volume = create_and_check_volume(client, volume_name, 2, str(size),
                                      backing_image)
 
     lht_hostId = get_self_host_id()
@@ -5487,11 +5820,12 @@ def test_filesystem_trim(client, fs_type):  # NOQA
     volume = common.wait_for_volume_healthy(client, volume_name)
 
     # write data to the volume
-    data = {
-        &#39;pos&#39;: 0,
-        &#39;content&#39;: common.generate_random_data(int(size)),
-    }
-    write_volume_data(volume, data)
+    volume_endpoint = get_volume_endpoint(volume)
+
+    # Take snapshots without overlapping
+    data_size = size/Mi
+    write_volume_dev_random_mb_data(
+        volume_endpoint, 0, data_size)
 
     # create a snapshot and backup
     snap = create_snapshot(client, volume_name)
@@ -5544,7 +5878,7 @@ def test_filesystem_trim(client, fs_type):  # NOQA
 </details>
 </dd>
 <dt id="tests.test_basic.backup_test"><code class="name flex">
-<span>def <span class="ident">backup_test</span></span>(<span>client, volume_name, size, backing_image='')</span>
+<span>def <span class="ident">backup_test</span></span>(<span>client, volume_name, size, backing_image='', compression_method='lz4')</span>
 </code></dt>
 <dd>
 <div class="desc"></div>
@@ -5552,19 +5886,20 @@ def test_filesystem_trim(client, fs_type):  # NOQA
 <summary>
 <span>Expand source code</span>
 </summary>
-<pre><code class="python">def backup_test(client, volume_name, size, backing_image=&#34;&#34;):  # NOQA
+<pre><code class="python">def backup_test(client, volume_name, size, backing_image=&#34;&#34;, compression_method=DEFAULT_BACKUP_COMPRESSION_METHOD):  # NOQA
     volume = create_and_check_volume(client, volume_name, 2, size,
                                      backing_image)
 
     lht_hostId = get_self_host_id()
     volume = volume.attach(hostId=lht_hostId)
     volume = common.wait_for_volume_healthy(client, volume_name)
+    assert volume.backupCompressionMethod == compression_method
 
-    backupstore_test(client, lht_hostId, volume_name, size)</code></pre>
+    backupstore_test(client, lht_hostId, volume_name, size, compression_method)</code></pre>
 </details>
 </dd>
 <dt id="tests.test_basic.backupstore_test"><code class="name flex">
-<span>def <span class="ident">backupstore_test</span></span>(<span>client, host_id, volname, size)</span>
+<span>def <span class="ident">backupstore_test</span></span>(<span>client, host_id, volname, size, compression_method)</span>
 </code></dt>
 <dd>
 <div class="desc"></div>
@@ -5572,7 +5907,7 @@ def test_filesystem_trim(client, fs_type):  # NOQA
 <summary>
 <span>Expand source code</span>
 </summary>
-<pre><code class="python">def backupstore_test(client, host_id, volname, size):  # NOQA
+<pre><code class="python">def backupstore_test(client, host_id, volname, size, compression_method):  # NOQA
     bv, b, snap2, data = create_backup(client, volname)
 
     # test restore
@@ -5588,11 +5923,12 @@ def test_filesystem_trim(client, fs_type):  # NOQA
     assert volume.numberOfReplicas == 2
     assert volume.state == &#34;detached&#34;
     assert volume.restoreRequired is False
+    assert volume.backupCompressionMethod == compression_method
 
     volume = volume.attach(hostId=host_id)
     volume = common.wait_for_volume_healthy(client, restore_name)
     check_volume_data(volume, data)
-    volume = volume.detach(hostId=&#34;&#34;)
+    volume = volume.detach()
     volume = common.wait_for_volume_detached(client, restore_name)
 
     delete_backup(client, bv.name, b.name)
@@ -5923,7 +6259,7 @@ the default disk.</li>
     check_volume_data(sb_volume2, data0_modified2, False)
 
     # allocated this active volume to a pod
-    sb_volume2.detach(hostId=&#34;&#34;)
+    sb_volume2.detach()
     sb_volume2 = common.wait_for_volume_detached(client, sb_volume2_name)
 
     create_pv_for_volume(client, core_api, sb_volume2, sb_volume2_name)
@@ -6166,7 +6502,7 @@ the default disk.</li>
     create_snapshot(client, volume_name)
 
     # Prepare to do revert
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = common.wait_for_volume_detached(client, volume_name)
     volume.attach(hostId=lht_hostId, disableFrontend=True)
     volume = common.wait_for_volume_healthy_no_frontend(client, volume_name)
@@ -6178,7 +6514,7 @@ the default disk.</li>
         volume.snapshotRevert(name=snap3_after.name)
     # Reverting to snap4 should succeed
     volume.snapshotRevert(name=snap4.name)
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = common.wait_for_volume_detached(client, volume_name)
     volume.attach(hostId=lht_hostId, disableFrontend=False)
     common.wait_for_volume_healthy(client, volume_name)
@@ -6263,7 +6599,7 @@ the default disk.</li>
     assert &#34;volume-head&#34; in snap.children.keys()
     assert snap.removed is True
 
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = common.wait_for_volume_detached(client, volume_name)
 
     volume.attach(hostId=lht_hostId, disableFrontend=True)
@@ -6276,7 +6612,7 @@ the default disk.</li>
 
     volume.snapshotRevert(name=snap2.name)
 
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = common.wait_for_volume_detached(client, volume_name)
 
     volume.attach(hostId=lht_hostId, disableFrontend=False)
@@ -6444,7 +6780,7 @@ def test_allow_volume_creation_with_degraded_availability(client, volume_name): 
     data = write_volume_random_data(volume, {})
 
     # detach volume
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = common.wait_for_volume_detached(client, volume_name)
     assert volume.conditions[VOLUME_CONDITION_SCHEDULED][&#39;status&#39;] == &#34;True&#34;
 
@@ -6460,7 +6796,7 @@ def test_allow_volume_creation_with_degraded_availability(client, volume_name): 
                                                &#34;status&#34;, &#34;True&#34;)
 
     # detach and re-attach the volume to verify the data
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = common.wait_for_volume_detached(client, volume_name)
 
     volume.attach(hostId=self_host)
@@ -6702,7 +7038,7 @@ def test_allow_volume_creation_with_degraded_availability_error(client, volume_n
     data = write_volume_random_data(volume, {})
 
     # detach and re-attach the volume to verify the data
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = common.wait_for_volume_detached(client, volume_name)
 
     volume.attach(hostId=self_host)
@@ -6907,7 +7243,7 @@ def test_attach_without_frontend(client, volume_name):  # NOQA
     write_volume_random_data(volume)
     create_snapshot(client, volume_name)
 
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = common.wait_for_volume_detached(client, volume_name)
 
     volume.attach(hostId=lht_hostId, disableFrontend=True)
@@ -6920,7 +7256,7 @@ def test_attach_without_frontend(client, volume_name):  # NOQA
 
     volume.snapshotRevert(name=snap1.name)
 
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = common.wait_for_volume_detached(client, volume_name)
 
     volume.attach(hostId=lht_hostId, disableFrontend=False)
@@ -6943,18 +7279,18 @@ def test_attach_without_frontend(client, volume_name):  # NOQA
 <div class="desc"><p>Test AWS IAM Role ARN</p>
 <ol>
 <li>Set backup target to S3</li>
-<li>Check longhorn manager and replica instance manager Pods
+<li>Check longhorn manager and aio instance manager Pods
 without 'iam.amazonaws.com/role' annotation</li>
 <li>Add AWS_IAM_ROLE_ARN to secret</li>
-<li>Check longhorn manager and replica instance manager Pods
+<li>Check longhorn manager and aio instance manager Pods
 with 'iam.amazonaws.com/role' annotation
 and matches to AWS_IAM_ROLE_ARN in secret</li>
 <li>Update AWS_IAM_ROLE_ARN from secret</li>
-<li>Check longhorn manager and replica instance manager Pods
+<li>Check longhorn manager and aio instance manager Pods
 with 'iam.amazonaws.com/role' annotation
 and matches to AWS_IAM_ROLE_ARN in secret</li>
 <li>Remove AWS_IAM_ROLE_ARN from secret</li>
-<li>Check longhorn manager and replica instance manager Pods
+<li>Check longhorn manager and aio instance manager Pods
 without 'iam.amazonaws.com/role' annotation</li>
 </ol></div>
 <details class="source">
@@ -6967,31 +7303,31 @@ def test_aws_iam_role_arn(client, core_api):  # NOQA
     Test AWS IAM Role ARN
 
     1. Set backup target to S3
-    2. Check longhorn manager and replica instance manager Pods
+    2. Check longhorn manager and aio instance manager Pods
        without &#39;iam.amazonaws.com/role&#39; annotation
     3. Add AWS_IAM_ROLE_ARN to secret
-    4. Check longhorn manager and replica instance manager Pods
+    4. Check longhorn manager and aio instance manager Pods
        with &#39;iam.amazonaws.com/role&#39; annotation
        and matches to AWS_IAM_ROLE_ARN in secret
     5. Update AWS_IAM_ROLE_ARN from secret
-    6. Check longhorn manager and replica instance manager Pods
+    6. Check longhorn manager and aio instance manager Pods
        with &#39;iam.amazonaws.com/role&#39; annotation
        and matches to AWS_IAM_ROLE_ARN in secret
     7. Remove AWS_IAM_ROLE_ARN from secret
-    8. Check longhorn manager and replica instance manager Pods
+    8. Check longhorn manager and aio instance manager Pods
        without &#39;iam.amazonaws.com/role&#39; annotation
     &#34;&#34;&#34;
     set_backupstore_s3(client)
 
     lh_label = &#39;app=longhorn-manager&#39;
-    replica_im_label = &#39;longhorn.io/instance-manager-type=replica&#39;
+    im_label = &#39;longhorn.io/instance-manager-type=aio&#39;
     anno_key = &#39;iam.amazonaws.com/role&#39;
     secret_name = backupstore_get_secret(client)
 
     common.wait_for_pod_annotation(
         core_api, lh_label, anno_key, None)
     common.wait_for_pod_annotation(
-        core_api, replica_im_label, anno_key, None)
+        core_api, im_label, anno_key, None)
 
     # Add secret key AWS_IAM_ROLE_ARN value test-aws-iam-role-arn
     secret = core_api.read_namespaced_secret(
@@ -7003,7 +7339,7 @@ def test_aws_iam_role_arn(client, core_api):  # NOQA
     common.wait_for_pod_annotation(
         core_api, lh_label, anno_key, &#39;test-aws-iam-role-arn&#39;)
     common.wait_for_pod_annotation(
-        core_api, replica_im_label, anno_key, &#39;test-aws-iam-role-arn&#39;)
+        core_api, im_label, anno_key, &#39;test-aws-iam-role-arn&#39;)
 
     # Update secret key AWS_IAM_ROLE_ARN value test-aws-iam-role-arn-2
     secret = core_api.read_namespaced_secret(
@@ -7015,7 +7351,7 @@ def test_aws_iam_role_arn(client, core_api):  # NOQA
     common.wait_for_pod_annotation(
         core_api, lh_label, anno_key, &#39;test-aws-iam-role-arn-2&#39;)
     common.wait_for_pod_annotation(
-        core_api, replica_im_label, anno_key, &#39;test-aws-iam-role-arn-2&#39;)
+        core_api, im_label, anno_key, &#39;test-aws-iam-role-arn-2&#39;)
 
     # Remove secret key AWS_IAM_ROLE_ARN
     body = [{&#34;op&#34;: &#34;remove&#34;, &#34;path&#34;: &#34;/data/AWS_IAM_ROLE_ARN&#34;}]
@@ -7025,7 +7361,7 @@ def test_aws_iam_role_arn(client, core_api):  # NOQA
     common.wait_for_pod_annotation(
         core_api, lh_label, anno_key, None)
     common.wait_for_pod_annotation(
-        core_api, replica_im_label, anno_key, None)</code></pre>
+        core_api, im_label, anno_key, None)</code></pre>
 </details>
 </dd>
 <dt id="tests.test_basic.test_backup"><code class="name flex">
@@ -7252,7 +7588,7 @@ def test_backup_failed_disable_auto_cleanup(set_random_backupstore,  # NOQA
     9.    Wait and check if the backup was not deleted.
     10.   Cleanup
     &#34;&#34;&#34;
-    backup_name = backup_failed_cleanup(client, core_api, volume_name, 256*Mi,
+    backup_name = backup_failed_cleanup(client, core_api, volume_name, 1024*Mi,
                                         failed_backup_ttl=&#34;0&#34;)
 
     # wait for 5 minutes to check if the failed backup exists
@@ -7461,6 +7797,9 @@ to prevent the following case of concurrent operations.
     11. Restore the latest backup.
     12. Wait for the restoration to be completed. Assert md5sum from step 6.
     &#34;&#34;&#34;
+    common.update_setting(client,
+                          common.SETTING_DEGRADED_AVAILABILITY, &#34;false&#34;)
+
     backupstore_cleanup(client)
     std_volume_name = volume_name + &#34;-std&#34;
     restore_volume_name_1 = volume_name + &#34;-restore-1&#34;
@@ -7565,6 +7904,9 @@ to prevent the following case of concurrent operations.
     10. Assert the data from the restored volume with md5sum.
     11. Assert the backup count in the backup store with 0.
     &#34;&#34;&#34;
+    common.update_setting(client,
+                          common.SETTING_DEGRADED_AVAILABILITY, &#34;false&#34;)
+
     backupstore_cleanup(client)
     std_volume_name = volume_name + &#34;-std&#34;
     restore_volume_name = volume_name + &#34;-restore&#34;
@@ -7982,7 +8324,7 @@ replica gone, the backup should in Error state and with the error message.</p>
     8. Cleanup (delete backups, delete volume)
     &#34;&#34;&#34;
     backup_status_for_unavailable_replicas_test(
-        client, volume_name, size=str(512 * Mi))</code></pre>
+        client, volume_name, size=3 * Gi)</code></pre>
 </details>
 </dd>
 <dt id="tests.test_basic.test_backup_volume_list"><code class="name flex">
@@ -8135,7 +8477,6 @@ def test_backup_volume_restore_with_access_mode(core_api, # NOQA
                                                 client, # NOQA
                                                 access_mode, # NOQA
                                        overridden_restored_access_mode): # NOQA
-
     &#34;&#34;&#34;
     Test the backup w/ the volume access mode, then restore a volume w/ the
      original access mode or being overridden.
@@ -8280,6 +8621,85 @@ def test_backup_volume_restore_with_access_mode(core_api, # NOQA
             common.wait_for_backup_target_available(client, False)</code></pre>
 </details>
 </dd>
+<dt id="tests.test_basic.test_backuptarget_invalid"><code class="name flex">
+<span>def <span class="ident">test_backuptarget_invalid</span></span>(<span>apps_api, client, core_api, backupstore_invalid, make_deployment_with_pvc, pvc_name, request, volume_name)</span>
+</code></dt>
+<dd>
+<div class="desc"><p>Related issue :
+<a href="https://github.com/longhorn/longhorn/issues/1249">https://github.com/longhorn/longhorn/issues/1249</a></p>
+<p>This test case does not cover the UI test mentioned in the related issue's
+test steps."</p>
+<p>Setup
+- Give an incorrect value to Backup target.</p>
+<p>Given
+- Create a volume, attach it to a workload, write data into the volume.</p>
+<p>When
+- Create a backup by a manifest yaml file</p>
+<p>Then
+- Backup will be failed and the backup state is Error.</p></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def test_backuptarget_invalid(apps_api, # NOQA
+                              client, # NOQA
+                              core_api, # NOQA
+                              backupstore_invalid, # NOQA
+                              make_deployment_with_pvc, # NOQA
+                              pvc_name, # NOQA
+                              request, # NOQA
+                              volume_name): # NOQA
+    &#34;&#34;&#34;
+    Related issue :
+    https://github.com/longhorn/longhorn/issues/1249
+
+    This test case does not cover the UI test mentioned in the related issue&#39;s
+    test steps.&#34;
+
+    Setup
+    - Give an incorrect value to Backup target.
+
+    Given
+    - Create a volume, attach it to a workload, write data into the volume.
+
+    When
+    - Create a backup by a manifest yaml file
+
+    Then
+    - Backup will be failed and the backup state is Error.
+    &#34;&#34;&#34;
+    volume = create_and_check_volume(client, volume_name)
+    pvc_name = volume_name + &#34;-pvc&#34;
+    create_pv_for_volume(client, core_api, volume, volume_name)
+    create_pvc_for_volume(client, core_api, volume, pvc_name)
+
+    deployment_name = volume_name + &#34;-dep&#34;
+    deployment = make_deployment_with_pvc(deployment_name, pvc_name)
+    create_and_wait_deployment(apps_api, deployment)
+
+    pod_names = common.get_deployment_pod_names(core_api, deployment)
+    write_pod_volume_random_data(core_api, pod_names[0], &#34;/data/test&#34;,
+                                 DATA_SIZE_IN_MB_1)
+
+    volume = client.by_id_volume(volume_name)
+    snap = create_snapshot(client, volume_name)
+    volume.snapshotBackup(name=snap.name)
+
+    for i in range(RETRY_COUNTS_SHORT):
+        api = get_custom_object_api_client()
+        backups = api.list_namespaced_custom_object(&#34;longhorn.io&#34;,
+                                                    &#34;v1beta2&#34;,
+                                                    &#34;longhorn-system&#34;,
+                                                    &#34;backups&#34;)
+
+        if backups[&#34;items&#34;][0][&#34;status&#34;][&#34;state&#34;] != &#34;&#34;:
+            break
+        time.sleep(RETRY_INTERVAL)
+
+    assert backups[&#34;items&#34;][0][&#34;spec&#34;][&#34;snapshotName&#34;] == snap.name
+    assert backups[&#34;items&#34;][0][&#34;status&#34;][&#34;state&#34;] == &#34;Error&#34;</code></pre>
+</details>
+</dd>
 <dt id="tests.test_basic.test_cleanup_system_generated_snapshots"><code class="name flex">
 <span>def <span class="ident">test_cleanup_system_generated_snapshots</span></span>(<span>client, core_api, volume_name, csi_pv, pvc, pod_make)</span>
 </code></dt>
@@ -8396,7 +8816,6 @@ def test_default_storage_class_syncup(core_api, request):  # NOQA
                 print(e)
             finally:
                 time.sleep(RETRY_INTERVAL)
-        longhorn_storage_class = storage_api.read_storage_class(&#34;longhorn&#34;)
         assert longhorn_storage_class.allow_volume_expansion is allow_exp
 
     def finalizer():
@@ -8426,25 +8845,34 @@ def test_default_storage_class_syncup(core_api, request):  # NOQA
 
     # step 3
     for i in range(RETRY_COMMAND_COUNT):
-        longhorn_storage_class = storage_api.read_storage_class(&#34;longhorn&#34;)
-        storage_class_data = \
-            yaml.safe_load(longhorn_storage_class.
-                           metadata.
-                           annotations[&#34;longhorn.io/last-applied-configmap&#34;])
-
-        if storage_class_data[&#34;reclaimPolicy&#34;] == \
-                config_map_data[&#34;reclaimPolicy&#34;]:
-            break
-
-        time.sleep(RETRY_INTERVAL)
+        try:
+            longhorn_storage_class = storage_api.read_storage_class(&#34;longhorn&#34;)
+            storage_class_data = \
+                yaml.safe_load(longhorn_storage_class.
+                               metadata.
+                               annotations[&#34;longhorn.io/last-applied-configmap&#34;]) # NOQA
+            if storage_class_data[&#34;reclaimPolicy&#34;] == \
+                    config_map_data[&#34;reclaimPolicy&#34;]:
+                break
+        except Exception as e:
+            print(e)
+        finally:
+            time.sleep(RETRY_INTERVAL)
 
     assert storage_class_data[&#34;reclaimPolicy&#34;] == \
         config_map_data[&#34;reclaimPolicy&#34;]
 
     # step 4
-    storage_api.delete_storage_class(&#34;longhorn&#34;)
-    for item in storage_api.list_storage_class().items:
-        assert item.metadata.name != &#34;longhorn&#34;
+    for i in range(RETRY_COMMAND_COUNT):
+        try:
+            storage_api.delete_storage_class(&#34;longhorn&#34;)
+            for item in storage_api.list_storage_class().items:
+                assert item.metadata.name != &#34;longhorn&#34;
+            break
+        except Exception as e:
+            print(e)
+        finally:
+            time.sleep(RETRY_INTERVAL)
 
     # step 5
     storage_class_recreated = False
@@ -8463,35 +8891,29 @@ def test_default_storage_class_syncup(core_api, request):  # NOQA
 </details>
 </dd>
 <dt id="tests.test_basic.test_delete_backup_during_restoring_volume"><code class="name flex">
-<span>def <span class="ident">test_delete_backup_during_restoring_volume</span></span>(<span>)</span>
+<span>def <span class="ident">test_delete_backup_during_restoring_volume</span></span>(<span>set_random_backupstore, client)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Test delete backup during restoring volume</p>
 <p>Context:</p>
 <p>The volume robustness should be faulted if the backup was deleted during
 restoring the volume.</p>
-<p>Setup:</p>
 <ol>
-<li>Create a volume v1 and attach to a node</li>
-<li>Write some data (&gt;100M) to volume v1</li>
-</ol>
-<p>Steps:</p>
-<ol>
-<li>Create a backup of volume v1</li>
-<li>Wait for that backup is completed</li>
-<li>Start to restore a volume v2 from this backup
-(Not wait for restoration completed)</li>
-<li>Delete the backup immediately</li>
-<li>Check that volume v2 "robustness" is "faulted" and
-the status of volume restore condition is "False",
-the reason of volume restore condition is "RestoreFailure"</li>
+<li>Given create volume v1 and attach to a node
+And write data 150M to volume v1</li>
+<li>When create a backup of volume v1
+And wait for that backup is completed
+And restore a volume v2 from volume v1 backup
+And delete the backup immediately</li>
+<li>Then volume v2 "robustness" should be "faulted"
+And "status" of volume restore condition should be "False",
+And "reason" of volume restore condition should be "RestoreFailure"</li>
 </ol></div>
 <details class="source">
 <summary>
 <span>Expand source code</span>
 </summary>
-<pre><code class="python">@pytest.mark.skip(reason=&#34;TODO&#34;)  # NOQA
-def test_delete_backup_during_restoring_volume():  # NOQA
+<pre><code class="python">def test_delete_backup_during_restoring_volume(set_random_backupstore, client):  # NOQA
     &#34;&#34;&#34;
     Test delete backup during restoring volume
 
@@ -8500,23 +8922,45 @@ def test_delete_backup_during_restoring_volume():  # NOQA
     The volume robustness should be faulted if the backup was deleted during
     restoring the volume.
 
-    Setup:
-
-    1. Create a volume v1 and attach to a node
-    2. Write some data (&gt;100M) to volume v1
-
-    Steps:
-
-    1. Create a backup of volume v1
-    2. Wait for that backup is completed
-    3. Start to restore a volume v2 from this backup
-       (Not wait for restoration completed)
-    4. Delete the backup immediately
-    5. Check that volume v2 &#34;robustness&#34; is &#34;faulted&#34; and
-       the status of volume restore condition is &#34;False&#34;,
-       the reason of volume restore condition is &#34;RestoreFailure&#34;
+    1. Given create volume v1 and attach to a node
+       And write data 150M to volume v1
+    2. When create a backup of volume v1
+       And wait for that backup is completed
+       And restore a volume v2 from volume v1 backup
+       And delete the backup immediately
+    3. Then volume v2 &#34;robustness&#34; should be &#34;faulted&#34;
+       And &#34;status&#34; of volume restore condition should be &#34;False&#34;,
+       And &#34;reason&#34; of volume restore condition should be &#34;RestoreFailure&#34;
     &#34;&#34;&#34;
-    pass</code></pre>
+    # Step 1
+    vol_v1_name = &#34;vol-v1&#34;
+    vol_v1 = create_and_check_volume(client, vol_v1_name, size=str(512 * Mi))
+    vol_v1.attach(hostId=get_self_host_id())
+    vol_v1 = wait_for_volume_healthy(client, vol_v1_name)
+
+    vol_v1_endpoint = get_volume_endpoint(vol_v1)
+    write_volume_dev_random_mb_data(vol_v1_endpoint, 1, 150)
+
+    # Step 2
+    bv, b, snap2, data = create_backup(client, vol_v1_name)
+
+    vol_v2_name = &#34;vol-v2&#34;
+    client.create_volume(name=vol_v2_name,
+                         size=str(512 * Mi),
+                         numberOfReplicas=3,
+                         fromBackup=b.url)
+
+    delete_backup(client, bv.name, b.name)
+    volume = wait_for_volume_status(client, vol_v1_name,
+                                    &#34;lastBackup&#34;, &#34;&#34;)
+    assert volume.lastBackupAt == &#34;&#34;
+
+    # Step 3
+    wait_for_volume_faulted(client, vol_v2_name)
+    wait_for_volume_condition_restore(client, vol_v2_name,
+                                      &#34;status&#34;, &#34;False&#34;)
+    wait_for_volume_condition_restore(client, vol_v2_name,
+                                      &#34;reason&#34;, &#34;RestoreFailure&#34;)</code></pre>
 </details>
 </dd>
 <dt id="tests.test_basic.test_deleting_backup_volume"><code class="name flex">
@@ -8550,6 +8994,95 @@ def test_delete_backup_during_restoring_volume():  # NOQA
 
     delete_backup_volume(client, volume_name)
     cleanup_volume(client, volume)</code></pre>
+</details>
+</dd>
+<dt id="tests.test_basic.test_dr_volume_activated_with_failed_replica"><code class="name flex">
+<span>def <span class="ident">test_dr_volume_activated_with_failed_replica</span></span>(<span>set_random_backupstore, client, core_api, volume_name)</span>
+</code></dt>
+<dd>
+<div class="desc"><p>Test DR volume activated with a failed replica</p>
+<p>Context:</p>
+<p>Make sure that DR volume could be activated
+as long as there is a ready replica.</p>
+<p>Steps:</p>
+<ol>
+<li>Create a volume and attach to a node.</li>
+<li>Create a backup of the volume with writing some data.</li>
+<li>Create a DR volume from the backup.</li>
+<li>Disable the replica rebuilding.</li>
+<li>Enable the setting <code>allow-volume-creation-with-degraded-availability</code></li>
+<li>Make a replica failed.</li>
+<li>Activate the DR volume.</li>
+<li>Enable the replica rebuilding.</li>
+<li>Attach the volume to a node.</li>
+<li>Check if data is correct.</li>
+</ol></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def test_dr_volume_activated_with_failed_replica(set_random_backupstore, client, core_api, volume_name):  # NOQA
+    &#34;&#34;&#34;
+    Test DR volume activated with a failed replica
+
+    Context:
+
+    Make sure that DR volume could be activated
+    as long as there is a ready replica.
+
+    Steps:
+
+    1.  Create a volume and attach to a node.
+    2.  Create a backup of the volume with writing some data.
+    3.  Create a DR volume from the backup.
+    4.  Disable the replica rebuilding.
+    5.  Enable the setting `allow-volume-creation-with-degraded-availability`
+    6.  Make a replica failed.
+    7.  Activate the DR volume.
+    8.  Enable the replica rebuilding.
+    9.  Attach the volume to a node.
+    10. Check if data is correct.
+    &#34;&#34;&#34;
+    backupstore_cleanup(client)
+
+    host_id = get_self_host_id()
+    vol = create_and_check_volume(client, volume_name, 2, SIZE)
+    vol.attach(hostId=host_id)
+    vol = common.wait_for_volume_healthy(client, volume_name)
+
+    data = {&#39;pos&#39;: 0, &#39;len&#39;: 2 * BACKUP_BLOCK_SIZE,
+            &#39;content&#39;: common.generate_random_data(2 * BACKUP_BLOCK_SIZE)}
+    _, backup, _, data = create_backup(client, volume_name, data)
+
+    dr_vol_name = &#34;dr-&#34; + volume_name
+    dr_vol = client.create_volume(name=dr_vol_name, size=SIZE,
+                                  numberOfReplicas=2, fromBackup=backup.url,
+                                  frontend=&#34;&#34;, standby=True)
+    check_volume_last_backup(client, dr_vol_name, backup.name)
+    wait_for_backup_restore_completed(client, dr_vol_name, backup.name)
+
+    common.update_setting(
+        client, common.SETTING_CONCURRENT_REPLICA_REBUILD_PER_NODE_LIMIT, &#34;0&#34;
+    )
+    common.update_setting(client, common.SETTING_DEGRADED_AVAILABILITY, &#34;true&#34;)
+
+    dr_vol = client.by_id_volume(dr_vol_name)
+    failed_replica = dr_vol.replicas[0]
+    crash_replica_processes(client, core_api, dr_vol_name,
+                            replicas=[failed_replica])
+    dr_vol = wait_for_volume_degraded(client, dr_vol_name)
+
+    activate_standby_volume(client, dr_vol_name)
+
+    common.update_setting(
+        client, common.SETTING_CONCURRENT_REPLICA_REBUILD_PER_NODE_LIMIT, &#34;5&#34;
+    )
+
+    dr_vol = client.by_id_volume(dr_vol_name)
+    dr_vol.attach(hostId=host_id)
+    dr_vol = common.wait_for_volume_healthy(client, dr_vol_name)
+
+    check_volume_data(dr_vol, data, False)</code></pre>
 </details>
 </dd>
 <dt id="tests.test_basic.test_dr_volume_with_all_backup_blocks_deleted"><code class="name flex">
@@ -9015,7 +9548,7 @@ check if size round up '2000683008/1908Mi'</li>
     volume.attach(hostId=self_hostId, disableFrontend=False)
     volume = wait_for_volume_healthy(client, volume_name)
     test_data = write_volume_random_data(volume)
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = wait_for_volume_detached(client, volume_name)
 
     volume.expand(size=&#34;2000000000&#34;)
@@ -9034,7 +9567,7 @@ check if size round up '2000683008/1908Mi'</li>
 
     volume = client.by_id_volume(volume_name)
     assert volume.size == &#34;2000683008&#34;
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = wait_for_volume_detached(client, volume_name)
 
     self_hostId = get_self_host_id()
@@ -9042,7 +9575,7 @@ check if size round up '2000683008/1908Mi'</li>
     volume = wait_for_volume_healthy(client, volume_name)
     check_volume_data(volume, test_data, False)
     test_data = write_volume_random_data(volume)
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = wait_for_volume_detached(client, volume_name)
 
     volume.expand(size=str(2 * Gi))
@@ -9061,14 +9594,14 @@ check if size round up '2000683008/1908Mi'</li>
 
     volume = client.by_id_volume(volume_name)
     assert volume.size == &#34;2147483648&#34;
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = wait_for_volume_detached(client, volume_name)
 
     self_hostId = get_self_host_id()
     volume.attach(hostId=self_hostId, disableFrontend=False)
     volume = wait_for_volume_healthy(client, volume_name)
     check_volume_data(volume, test_data, False)
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = wait_for_volume_detached(client, volume_name)
 
     client.delete(volume)
@@ -9163,7 +9696,7 @@ def test_expansion_basic(client, volume_name):  # NOQA
     create_snapshot(client, volume_name)
     check_volume_data(volume, snap3_data)
 
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = common.wait_for_volume_detached(client, volume_name)
 
     volume.attach(hostId=lht_hostId, disableFrontend=False)
@@ -9171,7 +9704,7 @@ def test_expansion_basic(client, volume_name):  # NOQA
     volume = client.by_id_volume(volume_name)
     check_block_device_size(volume, int(EXPAND_SIZE))
     check_volume_data(volume, snap3_data)
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = common.wait_for_volume_detached(client, volume_name)
 
     volume.attach(hostId=lht_hostId, disableFrontend=True)
@@ -9180,7 +9713,7 @@ def test_expansion_basic(client, volume_name):  # NOQA
     assert volume.frontend == VOLUME_FRONTEND_BLOCKDEV
     check_volume_endpoint(volume)
     volume.snapshotRevert(name=snap2.name)
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = common.wait_for_volume_detached(client, volume_name)
     volume.attach(hostId=lht_hostId, disableFrontend=False)
     common.wait_for_volume_healthy(client, volume_name)
@@ -9193,13 +9726,13 @@ def test_expansion_basic(client, volume_name):  # NOQA
     snap4_data = write_volume_data(volume, snap4_data)
     create_snapshot(client, volume_name)
     check_volume_data(volume, snap4_data)
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = common.wait_for_volume_detached(client, volume_name)
 
     volume.attach(hostId=lht_hostId, disableFrontend=True)
     volume = common.wait_for_volume_healthy_no_frontend(client, volume_name)
     volume.snapshotRevert(name=snap1.name)
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = common.wait_for_volume_detached(client, volume_name)
     volume.attach(hostId=lht_hostId, disableFrontend=False)
     common.wait_for_volume_healthy(client, volume_name)
@@ -9211,7 +9744,7 @@ def test_expansion_basic(client, volume_name):  # NOQA
 </details>
 </dd>
 <dt id="tests.test_basic.test_expansion_canceling"><code class="name flex">
-<span>def <span class="ident">test_expansion_canceling</span></span>(<span>client, core_api, volume_name, pod)</span>
+<span>def <span class="ident">test_expansion_canceling</span></span>(<span>client, core_api, volume_name, pod, pvc, storage_class)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Test expansion canceling</p>
@@ -9238,7 +9771,7 @@ so that the following online expansion will fail</li>
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">@pytest.mark.coretest  # NOQA
-def test_expansion_canceling(client, core_api, volume_name, pod):  # NOQA
+def test_expansion_canceling(client, core_api, volume_name, pod, pvc, storage_class):  # NOQA
     &#34;&#34;&#34;
     Test expansion canceling
 
@@ -9259,20 +9792,27 @@ def test_expansion_canceling(client, core_api, volume_name, pod):  # NOQA
     13. Validate the volume content, then check if data writing looks fine
     14. Clean up pod, PVC, and PV
     &#34;&#34;&#34;
-    expansion_pvc_name = &#34;pvc-&#34; + volume_name
-    expansion_pv_name = &#34;pv-&#34; + volume_name
-    pod_name = &#34;pod-&#34; + volume_name
-    volume = create_and_check_volume(client, volume_name, 2, SIZE)
-    create_pv_for_volume(client, core_api, volume, expansion_pv_name)
-    create_pvc_for_volume(client, core_api, volume, expansion_pvc_name)
+    storage_class[&#39;parameters&#39;][&#39;numberOfReplicas&#39;] = &#34;2&#34;
+    create_storage_class(storage_class)
+
+    pod_name = &#39;expand-canceling-test&#39;
+    expansion_pvc_name = pod_name + &#34;-pvc&#34;
+    pvc[&#39;metadata&#39;][&#39;name&#39;] = expansion_pvc_name
+    pvc[&#39;spec&#39;][&#39;storageClassName&#39;] = storage_class[&#39;metadata&#39;][&#39;name&#39;]
+    pvc[&#39;spec&#39;][&#39;resources&#39;][&#39;requests&#39;][&#39;storage&#39;] = SIZE
+    common.create_pvc(pvc)
+
     pod[&#39;metadata&#39;][&#39;name&#39;] = pod_name
     pod[&#39;spec&#39;][&#39;volumes&#39;] = [{
         &#39;name&#39;: pod[&#39;spec&#39;][&#39;containers&#39;][0][&#39;volumeMounts&#39;][0][&#39;name&#39;],
-        &#39;persistentVolumeClaim&#39;: {
-            &#39;claimName&#39;: expansion_pvc_name,
-        },
+        &#39;persistentVolumeClaim&#39;: {&#39;claimName&#39;: expansion_pvc_name},
     }]
     create_and_wait_pod(core_api, pod)
+
+    pv = common.wait_and_get_pv_for_pvc(core_api, expansion_pvc_name)
+    assert pv.status.phase == &#34;Bound&#34;
+    expansion_pv_name = pv.metadata.name
+    volume_name = pv.spec.csi.volume_handle
 
     # Step 3: Prepare to fail offline expansion for one replica
     volume = client.by_id_volume(volume_name)
@@ -9354,7 +9894,7 @@ def test_expansion_canceling(client, core_api, volume_name, pod):  # NOQA
 </details>
 </dd>
 <dt id="tests.test_basic.test_expansion_with_scheduling_failure"><code class="name flex">
-<span>def <span class="ident">test_expansion_with_scheduling_failure</span></span>(<span>client, core_api, volume_name, pod)</span>
+<span>def <span class="ident">test_expansion_with_scheduling_failure</span></span>(<span>client, core_api, volume_name, pod, pvc, storage_class)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Test if the running volume with scheduling failure
@@ -9399,7 +9939,7 @@ those of the case test_running_volume_with_scheduling_failure().</p></div>
 </summary>
 <pre><code class="python">@pytest.mark.coretest  # NOQA
 def test_expansion_with_scheduling_failure(
-        client, core_api, volume_name, pod):  # NOQA
+        client, core_api, volume_name, pod, pvc, storage_class):  # NOQA
     &#34;&#34;&#34;
     Test if the running volume with scheduling failure
     can be expanded after the detachment.
@@ -9444,22 +9984,27 @@ def test_expansion_with_scheduling_failure(
     client.update(replica_node_soft_anti_affinity_setting, value=&#34;false&#34;)
 
     data_path1 = &#34;/data/test1&#34;
-    test_pv_name = &#34;pv-&#34; + volume_name
-    test_pvc_name = &#34;pvc-&#34; + volume_name
-    test_pod_name = &#34;pod-&#34; + volume_name
+    pvc[&#39;spec&#39;][&#39;resources&#39;][&#39;requests&#39;][&#39;storage&#39;] = str(300 * Mi)
+    create_storage_class(storage_class)
 
-    volume = create_and_check_volume(client, volume_name, size=str(300 * Mi))
-    create_pv_for_volume(client, core_api, volume, test_pv_name)
-    create_pvc_for_volume(client, core_api, volume, test_pvc_name)
+    test_pod_name = &#39;expand-scheduling-failed-test&#39;
+    test_pvc_name = test_pod_name + &#34;-pvc&#34;
+    pvc[&#39;metadata&#39;][&#39;name&#39;] = test_pvc_name
+    pvc[&#39;spec&#39;][&#39;storageClassName&#39;] = storage_class[&#39;metadata&#39;][&#39;name&#39;]
+    common.create_pvc(pvc)
 
     pod[&#39;metadata&#39;][&#39;name&#39;] = test_pod_name
     pod[&#39;spec&#39;][&#39;volumes&#39;] = [{
         &#39;name&#39;: pod[&#39;spec&#39;][&#39;containers&#39;][0][&#39;volumeMounts&#39;][0][&#39;name&#39;],
-        &#39;persistentVolumeClaim&#39;: {
-            &#39;claimName&#39;: test_pvc_name,
-        },
+        &#39;persistentVolumeClaim&#39;: {&#39;claimName&#39;: test_pvc_name},
     }]
     create_and_wait_pod(core_api, pod)
+
+    pv = common.wait_and_get_pv_for_pvc(core_api, test_pvc_name)
+    assert pv.status.phase == &#34;Bound&#34;
+    test_pv_name = pv.metadata.name
+    volume_name = pv.spec.csi.volume_handle
+
     wait_for_volume_healthy(client, volume_name)
     write_pod_volume_random_data(core_api, test_pod_name,
                                  data_path1, DATA_SIZE_IN_MB_1)
@@ -9521,7 +10066,7 @@ def test_expansion_with_scheduling_failure(
 
     expanded_size = str(400 * Mi)
     volume.expand(size=expanded_size)
-    wait_for_volume_expansion(client, volume_name)
+    wait_for_volume_expansion(client, volume_name, expanded_size)
     volume = wait_for_volume_detached(client, volume_name)
     assert volume.size == expanded_size
     assert len(volume.replicas) == 2
@@ -9589,7 +10134,7 @@ def test_expansion_with_scheduling_failure(
     test_data = write_volume_random_data(volume)
 
     # Step 2: Offline expansion
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = wait_for_volume_detached(client, volume_name)
     volume.expand(size=&#34;2000000000&#34;)
     wait_for_volume_expansion(client, volume_name)
@@ -9735,7 +10280,7 @@ def test_filesystem_trim(client, fs_type):  # NOQA
         client, test_volume_name)
     volume.snapshotRevert(name=snap0_origin.name)
 
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = wait_for_volume_detached(client, test_volume_name)
     volume.attach(hostId=host_id)
     common.wait_for_volume_healthy(client, test_volume_name)
@@ -9908,7 +10453,7 @@ def test_filesystem_trim(client, fs_type):  # NOQA
         client, test_volume_name)
     volume.snapshotRevert(name=snap21_origin.name)
 
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = wait_for_volume_detached(client, test_volume_name)
     volume.attach(hostId=host_id)
     common.wait_for_volume_healthy(client, test_volume_name)
@@ -10133,17 +10678,17 @@ def test_listing_backup_volume(client, backing_image=&#34;&#34;):   # NOQA
     common.delete_backup_volume(client, volume3_name)
     common.wait_for_backup_volume_delete(client, volume3_name)
 
-    volume1.detach(hostId=&#34;&#34;)
+    volume1.detach()
     volume1 = common.wait_for_volume_detached(client, volume1_name)
     client.delete(volume1)
     wait_for_volume_delete(client, volume1_name)
 
-    volume2.detach(hostId=&#34;&#34;)
+    volume2.detach()
     volume2 = common.wait_for_volume_detached(client, volume2_name)
     client.delete(volume2)
     wait_for_volume_delete(client, volume2_name)
 
-    volume3.detach(hostId=&#34;&#34;)
+    volume3.detach()
     volume3 = common.wait_for_volume_detached(client, volume3_name)
     client.delete(volume3)
     wait_for_volume_delete(client, volume3_name)
@@ -10228,6 +10773,108 @@ Then all 10 volumes are deleted in 1 minute.</p></div>
                                    retry_counts=retry_counts)
     common.wait_for_pods_volume_delete(client, pod_list,
                                        retry_counts=retry_counts)</code></pre>
+</details>
+</dd>
+<dt id="tests.test_basic.test_pvc_storage_class_name_from_backup_volume"><code class="name flex">
+<span>def <span class="ident">test_pvc_storage_class_name_from_backup_volume</span></span>(<span>)</span>
+</code></dt>
+<dd>
+<div class="desc"><p>Test the storageClasName of the restored volume's PV/PVC
+should be from the backup volume</p>
+<p>Given
+- Create a new StorageClass
+<code>kind: StorageClass
+apiVersion: storage.k8s.io/v1
+metadata:
+name: longhorn-sc-name-recorded
+provisioner: driver.longhorn.io
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+parameters:
+numberOfReplicas: "3"
+staleReplicaTimeout: "2880"</code>
+- Create a PVC to use this SC
+<code>apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+name: test-pvc
+spec:
+accessModes:
+- ReadWriteOnce
+storageClassName: longhorn-sc-name-recorded
+resources:
+requests:
+storage: 5Gi</code>
+- Attach the Volume and write some data</p>
+<p>When
+- Backup the Volume</p>
+<p>Then
+- the backupvolume's status.storageClassName should be
+longhorn-sc-name-recorded</p>
+<p>When
+- Restore the backup to a new volume
+- Create PV/PVC from the new volume with create new PVC option</p>
+<p>Then
+- The new PVC's storageClassName should still be longhorn-sc-name-recorded
+- Verify the restored data is the same as original one</p></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">@pytest.mark.skip(reason=&#34;TODO&#34;)
+def test_pvc_storage_class_name_from_backup_volume(): # NOQA
+    &#34;&#34;&#34;
+    Test the storageClasName of the restored volume&#39;s PV/PVC
+    should be from the backup volume
+
+    Given
+    - Create a new StorageClass
+      ```
+      kind: StorageClass
+      apiVersion: storage.k8s.io/v1
+      metadata:
+        name: longhorn-sc-name-recorded
+      provisioner: driver.longhorn.io
+      allowVolumeExpansion: true
+      reclaimPolicy: Delete
+      volumeBindingMode: Immediate
+      parameters:
+        numberOfReplicas: &#34;3&#34;
+        staleReplicaTimeout: &#34;2880&#34;
+      ```
+    - Create a PVC to use this SC
+      ```
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: test-pvc
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: longhorn-sc-name-recorded
+        resources:
+          requests:
+            storage: 5Gi
+      ```
+    - Attach the Volume and write some data
+
+    When
+    - Backup the Volume
+
+    Then
+    - the backupvolume&#39;s status.storageClassName should be
+      longhorn-sc-name-recorded
+
+    When
+    - Restore the backup to a new volume
+    - Create PV/PVC from the new volume with create new PVC option
+
+    Then
+    - The new PVC&#39;s storageClassName should still be longhorn-sc-name-recorded
+    - Verify the restored data is the same as original one
+    &#34;&#34;&#34;
+    pass</code></pre>
 </details>
 </dd>
 <dt id="tests.test_basic.test_restore_basic"><code class="name flex">
@@ -10593,7 +11240,7 @@ def test_restore_inc_with_offline_expansion(set_random_backupstore, client, core
     check_volume_data(dr_volume2, data2)
 
     # allocated this active volume to a pod
-    dr_volume2.detach(hostId=&#34;&#34;)
+    dr_volume2.detach()
     dr_volume2 = common.wait_for_volume_detached(client, dr_volume2_name)
 
     create_pv_for_volume(client, core_api, dr_volume2, dr_volume2_name)
@@ -10637,9 +11284,9 @@ def test_restore_inc_with_offline_expansion(set_random_backupstore, client, core
     delete_and_wait_pv(core_api, dr_volume2_name)
 
     # cleanup
-    std_volume.detach(hostId=&#34;&#34;)
-    dr_volume0.detach(hostId=&#34;&#34;)
-    dr_volume1.detach(hostId=&#34;&#34;)
+    std_volume.detach()
+    dr_volume0.detach()
+    dr_volume1.detach()
     std_volume = common.wait_for_volume_detached(client, volume_name)
     dr_volume0 = common.wait_for_volume_detached(client, dr_volume0_name)
     dr_volume1 = common.wait_for_volume_detached(client, dr_volume1_name)
@@ -11439,6 +12086,174 @@ def test_storage_class_from_backup(set_random_backupstore, volume_name, pvc_name
     assert test_data == restored_data</code></pre>
 </details>
 </dd>
+<dt id="tests.test_basic.test_volume_backup_and_restore_with_gzip_compression_method"><code class="name flex">
+<span>def <span class="ident">test_volume_backup_and_restore_with_gzip_compression_method</span></span>(<span>client, set_random_backupstore, volume_name)</span>
+</code></dt>
+<dd>
+<div class="desc"><p>Scenario: test volume backup and restore with different compression methods</p>
+<p>Issue: <a href="https://github.com/longhorn/longhorn/issues/5189">https://github.com/longhorn/longhorn/issues/5189</a></p>
+<p>Given setup Backup Compression Method is "gzip"
+And setup backup concurrent limit is "4"
+And setup restore concurrent limit is "4"</p>
+<p>When create a volume and attach to the current node
+And get the volume's details
+Then verify the volume's compression method is "gzip"</p>
+<p>Then Create a backup of volume
+And Write volume random data
+Then restore the backup to a new volume
+And Attach the new volume and verify the data integrity
+And Detach the volume and delete the backup
+And Wait for the restored volume's <code>lastBackup</code> to be cleaned
+(due to remove the backup)
+And Delete the volume</p></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">@pytest.mark.volume_backup_restore   # NOQA
+def test_volume_backup_and_restore_with_gzip_compression_method(client, set_random_backupstore, volume_name):  # NOQA
+    &#34;&#34;&#34;
+    Scenario: test volume backup and restore with different compression methods
+
+    Issue: https://github.com/longhorn/longhorn/issues/5189
+
+    Given setup Backup Compression Method is &#34;gzip&#34;
+    And setup backup concurrent limit is &#34;4&#34;
+    And setup restore concurrent limit is &#34;4&#34;
+
+    When create a volume and attach to the current node
+    And get the volume&#39;s details
+    Then verify the volume&#39;s compression method is &#34;gzip&#34;
+
+    Then Create a backup of volume
+    And Write volume random data
+    Then restore the backup to a new volume
+    And Attach the new volume and verify the data integrity
+    And Detach the volume and delete the backup
+    And Wait for the restored volume&#39;s `lastBackup` to be cleaned
+    (due to remove the backup)
+    And Delete the volume
+    &#34;&#34;&#34;
+    common.update_setting(client, common.SETTING_BACKUP_COMPRESSION_METHOD,
+                          BACKUP_COMPRESSION_METHOD_GZIP)
+    common.update_setting(client, common.SETTING_BACKUP_CONCURRENT_LIMIT, &#34;4&#34;)
+    common.update_setting(client, common.SETTING_RESTORE_CONCURRENT_LIMIT, &#34;4&#34;)
+    backup_test(client, volume_name, SIZE,
+                compression_method=BACKUP_COMPRESSION_METHOD_GZIP)</code></pre>
+</details>
+</dd>
+<dt id="tests.test_basic.test_volume_backup_and_restore_with_lz4_compression_method"><code class="name flex">
+<span>def <span class="ident">test_volume_backup_and_restore_with_lz4_compression_method</span></span>(<span>client, set_random_backupstore, volume_name)</span>
+</code></dt>
+<dd>
+<div class="desc"><p>Scenario: test volume backup and restore with different compression methods</p>
+<p>Issue: <a href="https://github.com/longhorn/longhorn/issues/5189">https://github.com/longhorn/longhorn/issues/5189</a></p>
+<p>Given setup Backup Compression Method is "lz4"
+And setup backup concurrent limit is "4"
+And setup restore concurrent limit is "4"</p>
+<p>When create a volume and attach to the current node
+And get the volume's details
+Then verify the volume's compression method is "lz4"</p>
+<p>Then Create a backup of volume
+And Write volume random data
+Then restore the backup to a new volume
+And Attach the new volume and verify the data integrity
+Then Detach the volume and delete the backup
+And Wait for the restored volume's <code>lastBackup</code> to be cleaned
+(due to remove the backup)
+And Delete the volume</p></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">@pytest.mark.volume_backup_restore   # NOQA
+def test_volume_backup_and_restore_with_lz4_compression_method(client, set_random_backupstore, volume_name):  # NOQA
+    &#34;&#34;&#34;
+    Scenario: test volume backup and restore with different compression methods
+
+    Issue: https://github.com/longhorn/longhorn/issues/5189
+
+    Given setup Backup Compression Method is &#34;lz4&#34;
+    And setup backup concurrent limit is &#34;4&#34;
+    And setup restore concurrent limit is &#34;4&#34;
+
+    When create a volume and attach to the current node
+    And get the volume&#39;s details
+    Then verify the volume&#39;s compression method is &#34;lz4&#34;
+
+    Then Create a backup of volume
+    And Write volume random data
+    Then restore the backup to a new volume
+    And Attach the new volume and verify the data integrity
+    Then Detach the volume and delete the backup
+    And Wait for the restored volume&#39;s `lastBackup` to be cleaned
+    (due to remove the backup)
+    And Delete the volume
+    &#34;&#34;&#34;
+    common.update_setting(client, common.SETTING_BACKUP_COMPRESSION_METHOD,
+                          BACKUP_COMPRESSION_METHOD_LZ4)
+    common.update_setting(client, common.SETTING_BACKUP_CONCURRENT_LIMIT, &#34;4&#34;)
+    common.update_setting(client, common.SETTING_RESTORE_CONCURRENT_LIMIT, &#34;4&#34;)
+    backup_test(client, volume_name, SIZE,
+                compression_method=BACKUP_COMPRESSION_METHOD_LZ4)</code></pre>
+</details>
+</dd>
+<dt id="tests.test_basic.test_volume_backup_and_restore_with_none_compression_method"><code class="name flex">
+<span>def <span class="ident">test_volume_backup_and_restore_with_none_compression_method</span></span>(<span>client, set_random_backupstore, volume_name)</span>
+</code></dt>
+<dd>
+<div class="desc"><p>Scenario: test volume backup and restore with different compression methods</p>
+<p>Issue: <a href="https://github.com/longhorn/longhorn/issues/5189">https://github.com/longhorn/longhorn/issues/5189</a></p>
+<p>Given setup Backup Compression Method is "none"
+And setup backup concurrent limit is "4"
+And setup restore concurrent limit is "4"</p>
+<p>When create a volume and attach to the current node
+And get the volume's details
+Then verify the volume's compression method is "none"</p>
+<p>Then Create a backup of volume
+And Write volume random data
+Then restore the backup to a new volume
+And Attach the new volume and verify the data integrity
+And Detach the volume and delete the backup
+And Wait for the restored volume's <code>lastBackup</code> to be cleaned
+(due to remove the backup)
+And Delete the volume</p></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">@pytest.mark.volume_backup_restore   # NOQA
+def test_volume_backup_and_restore_with_none_compression_method(client, set_random_backupstore, volume_name):  # NOQA
+    &#34;&#34;&#34;
+    Scenario: test volume backup and restore with different compression methods
+
+    Issue: https://github.com/longhorn/longhorn/issues/5189
+
+    Given setup Backup Compression Method is &#34;none&#34;
+    And setup backup concurrent limit is &#34;4&#34;
+    And setup restore concurrent limit is &#34;4&#34;
+
+    When create a volume and attach to the current node
+    And get the volume&#39;s details
+    Then verify the volume&#39;s compression method is &#34;none&#34;
+
+    Then Create a backup of volume
+    And Write volume random data
+    Then restore the backup to a new volume
+    And Attach the new volume and verify the data integrity
+    And Detach the volume and delete the backup
+    And Wait for the restored volume&#39;s `lastBackup` to be cleaned
+    (due to remove the backup)
+    And Delete the volume
+    &#34;&#34;&#34;
+    common.update_setting(client, common.SETTING_BACKUP_COMPRESSION_METHOD,
+                          BACKUP_COMPRESSION_METHOD_NONE)
+    common.update_setting(client, common.SETTING_BACKUP_CONCURRENT_LIMIT, &#34;4&#34;)
+    common.update_setting(client, common.SETTING_RESTORE_CONCURRENT_LIMIT, &#34;4&#34;)
+    backup_test(client, volume_name, SIZE,
+                compression_method=BACKUP_COMPRESSION_METHOD_NONE)</code></pre>
+</details>
+</dd>
 <dt id="tests.test_basic.test_volume_basic"><code class="name flex">
 <span>def <span class="ident">test_volume_basic</span></span>(<span>client, volume_name)</span>
 </code></dt>
@@ -11737,7 +12552,7 @@ def test_volume_multinode(client, volume_name):  # NOQA
                                                 volume_name)
         engine = get_volume_engine(volume)
         assert engine.hostId == host_id
-        volume = volume.detach(hostId=&#34;&#34;)
+        volume = volume.detach()
         volume = common.wait_for_volume_detached(client,
                                                  volume_name)
 
@@ -11819,7 +12634,7 @@ def test_volume_scheduling_failure(client, volume_name):  # NOQA
     endpoint = get_volume_endpoint(volume)
     volume_rw_test(endpoint)
 
-    volume = volume.detach(hostId=&#34;&#34;)
+    volume = volume.detach()
     volume = common.wait_for_volume_detached(client, volume_name)
 
     client.delete(volume)
@@ -11871,7 +12686,7 @@ False.</li>
 
         if count &lt; max_count:
             volume = client.by_id_volume(volume_name)
-            assert volume.conditions.toomanysnapshots.status == &#34;False&#34;
+            assert volume.conditions.TooManySnapshots.status == &#34;False&#34;
         else:
             wait_for_volume_condition_toomanysnapshots(client, volume_name,
                                                        &#34;status&#34;, &#34;True&#34;)
@@ -12102,7 +12917,7 @@ the format <strong><em>*rw</em></strong>*</li>
     volume = client.by_id_volume(volume_name)
     volume_rw_test(get_volume_endpoint(volume))
 
-    volume.detach(hostId=&#34;&#34;)
+    volume.detach()
     volume = common.wait_for_volume_detached(client, volume_name)
     assert volume.restoreRequired is False
 
@@ -12214,10 +13029,12 @@ the format <strong><em>*rw</em></strong>*</li>
 <li><code><a title="tests.test_basic.test_backup_volume_list" href="#tests.test_basic.test_backup_volume_list">test_backup_volume_list</a></code></li>
 <li><code><a title="tests.test_basic.test_backup_volume_restore_with_access_mode" href="#tests.test_basic.test_backup_volume_restore_with_access_mode">test_backup_volume_restore_with_access_mode</a></code></li>
 <li><code><a title="tests.test_basic.test_backuptarget_available_during_engine_image_not_ready" href="#tests.test_basic.test_backuptarget_available_during_engine_image_not_ready">test_backuptarget_available_during_engine_image_not_ready</a></code></li>
+<li><code><a title="tests.test_basic.test_backuptarget_invalid" href="#tests.test_basic.test_backuptarget_invalid">test_backuptarget_invalid</a></code></li>
 <li><code><a title="tests.test_basic.test_cleanup_system_generated_snapshots" href="#tests.test_basic.test_cleanup_system_generated_snapshots">test_cleanup_system_generated_snapshots</a></code></li>
 <li><code><a title="tests.test_basic.test_default_storage_class_syncup" href="#tests.test_basic.test_default_storage_class_syncup">test_default_storage_class_syncup</a></code></li>
 <li><code><a title="tests.test_basic.test_delete_backup_during_restoring_volume" href="#tests.test_basic.test_delete_backup_during_restoring_volume">test_delete_backup_during_restoring_volume</a></code></li>
 <li><code><a title="tests.test_basic.test_deleting_backup_volume" href="#tests.test_basic.test_deleting_backup_volume">test_deleting_backup_volume</a></code></li>
+<li><code><a title="tests.test_basic.test_dr_volume_activated_with_failed_replica" href="#tests.test_basic.test_dr_volume_activated_with_failed_replica">test_dr_volume_activated_with_failed_replica</a></code></li>
 <li><code><a title="tests.test_basic.test_dr_volume_with_all_backup_blocks_deleted" href="#tests.test_basic.test_dr_volume_with_all_backup_blocks_deleted">test_dr_volume_with_all_backup_blocks_deleted</a></code></li>
 <li><code><a title="tests.test_basic.test_dr_volume_with_backup_block_deletion" href="#tests.test_basic.test_dr_volume_with_backup_block_deletion">test_dr_volume_with_backup_block_deletion</a></code></li>
 <li><code><a title="tests.test_basic.test_dr_volume_with_backup_block_deletion_abort_during_backup_in_progress" href="#tests.test_basic.test_dr_volume_with_backup_block_deletion_abort_during_backup_in_progress">test_dr_volume_with_backup_block_deletion_abort_during_backup_in_progress</a></code></li>
@@ -12231,6 +13048,7 @@ the format <strong><em>*rw</em></strong>*</li>
 <li><code><a title="tests.test_basic.test_hosts" href="#tests.test_basic.test_hosts">test_hosts</a></code></li>
 <li><code><a title="tests.test_basic.test_listing_backup_volume" href="#tests.test_basic.test_listing_backup_volume">test_listing_backup_volume</a></code></li>
 <li><code><a title="tests.test_basic.test_multiple_volumes_creation_with_degraded_availability" href="#tests.test_basic.test_multiple_volumes_creation_with_degraded_availability">test_multiple_volumes_creation_with_degraded_availability</a></code></li>
+<li><code><a title="tests.test_basic.test_pvc_storage_class_name_from_backup_volume" href="#tests.test_basic.test_pvc_storage_class_name_from_backup_volume">test_pvc_storage_class_name_from_backup_volume</a></code></li>
 <li><code><a title="tests.test_basic.test_restore_basic" href="#tests.test_basic.test_restore_basic">test_restore_basic</a></code></li>
 <li><code><a title="tests.test_basic.test_restore_inc" href="#tests.test_basic.test_restore_inc">test_restore_inc</a></code></li>
 <li><code><a title="tests.test_basic.test_restore_inc_with_offline_expansion" href="#tests.test_basic.test_restore_inc_with_offline_expansion">test_restore_inc_with_offline_expansion</a></code></li>
@@ -12243,6 +13061,9 @@ the format <strong><em>*rw</em></strong>*</li>
 <li><code><a title="tests.test_basic.test_space_usage_for_rebuilding_only_volume" href="#tests.test_basic.test_space_usage_for_rebuilding_only_volume">test_space_usage_for_rebuilding_only_volume</a></code></li>
 <li><code><a title="tests.test_basic.test_space_usage_for_rebuilding_only_volume_worst_scenario" href="#tests.test_basic.test_space_usage_for_rebuilding_only_volume_worst_scenario">test_space_usage_for_rebuilding_only_volume_worst_scenario</a></code></li>
 <li><code><a title="tests.test_basic.test_storage_class_from_backup" href="#tests.test_basic.test_storage_class_from_backup">test_storage_class_from_backup</a></code></li>
+<li><code><a title="tests.test_basic.test_volume_backup_and_restore_with_gzip_compression_method" href="#tests.test_basic.test_volume_backup_and_restore_with_gzip_compression_method">test_volume_backup_and_restore_with_gzip_compression_method</a></code></li>
+<li><code><a title="tests.test_basic.test_volume_backup_and_restore_with_lz4_compression_method" href="#tests.test_basic.test_volume_backup_and_restore_with_lz4_compression_method">test_volume_backup_and_restore_with_lz4_compression_method</a></code></li>
+<li><code><a title="tests.test_basic.test_volume_backup_and_restore_with_none_compression_method" href="#tests.test_basic.test_volume_backup_and_restore_with_none_compression_method">test_volume_backup_and_restore_with_none_compression_method</a></code></li>
 <li><code><a title="tests.test_basic.test_volume_basic" href="#tests.test_basic.test_volume_basic">test_volume_basic</a></code></li>
 <li><code><a title="tests.test_basic.test_volume_iscsi_basic" href="#tests.test_basic.test_volume_iscsi_basic">test_volume_iscsi_basic</a></code></li>
 <li><code><a title="tests.test_basic.test_volume_metafile_deleted" href="#tests.test_basic.test_volume_metafile_deleted">test_volume_metafile_deleted</a></code></li>
