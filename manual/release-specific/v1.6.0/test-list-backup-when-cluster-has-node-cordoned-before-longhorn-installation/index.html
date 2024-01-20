@@ -781,26 +781,21 @@
 
 
 <main style="padding: 1%; width: 70%;">
-  <h1 id="title">Test Instance Manager IP Sync</h1>
+  <h1 id="title">Test list backup when cluster has node cordoned before Longhorn installation</h1>
   <div>
     <article id="content">
-       <h2 id="test-step">Test step:</h2>
-<ol>
-<li>Launch longhorn system</li>
-<li>Create and attach a volume</li>
-<li>Follow this <a href="https://github.com/longhorn/longhorn/wiki/dev:-How-to-modify-the-status-subresource-with-%60kubectl-edit%60-(CRD)">doc</a> to manually modify the IP of one instance-manager-r. e.g.,
-<pre tabindex="0"><code>curl -k -XPATCH -H &#34;Accept: application/json&#34; -H &#34;Content-Type: application/merge-patch+json&#34; -H &#34;Authorization: Bearer kubeconfig-xxxxxx&#34; --data &#39;{&#34;status&#34;:{&#34;ip&#34;:&#34;1.1.1.1&#34;}}&#39; https://172.104.72.64/k8s/clusters/c-znrxc/apis/longhorn.io/v1beta1/namespaces/longhorn-system/instancemanagers/instance-manager-r-63ece607/status
-</code></pre><ol>
-<li>Notice that the bearer token <code>kubeconfig-xxx</code> can be found in your kube config file</li>
-<li>Remember to add <code>/status</code> at the end of the URL</li>
-</ol>
-</li>
-<li>Verify the IP of the instance manager still matches the pod IP</li>
-<li>Verify the volume can be detached.</li>
-</ol>
+       <h2 id="related-issue">Related issue</h2>
+<p><a href="https://github.com/longhorn/longhorn/issues/7619">https://github.com/longhorn/longhorn/issues/7619</a></p>
+<h2 id="test-step">Test step</h2>
+<p><strong>Given</strong> a cluster has 3 worker nodes.<br>
+<strong>And</strong> 2 worker nodes are cordoned.<br>
+<strong>And</strong> Longhorn is installed.</p>
+<p><strong>When</strong> Setting up a backup target.</p>
+<p><strong>Then</strong> no error is observed on the UI Backup page.<br>
+<strong>And</strong> Backup custom resources are created if the backup target has existing backups.</p>
 
     </article>
-  <a href="https://github.com/longhorn/longhorn-tests/edit/master/docs/content/manual/release-specific/v1.1.0/instance-manager-ip-sync.md" target="_blank" title="Edit on Github" style="font-size:smaller;float:right;padding-right:3%">[Edit]</a>
+  <a href="https://github.com/longhorn/longhorn-tests/edit/master/docs/content/manual/release-specific/v1.6.0/test-list-backup-when-cluster-has-node-cordoned-before-longhorn-installation.md" target="_blank" title="Edit on Github" style="font-size:smaller;float:right;padding-right:3%">[Edit]</a>
   </div>
 
     
