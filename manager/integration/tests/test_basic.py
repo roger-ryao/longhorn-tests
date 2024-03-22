@@ -4641,6 +4641,7 @@ def test_default_storage_class_syncup(core_api, request):  # NOQA
             try:
                 longhorn_storage_class = storage_api.read_storage_class(
                                                      "longhorn")
+                print(f"Actual value: {longhorn_storage_class.allow_volume_expansion}, Expected value: {allow_exp}")
                 assert longhorn_storage_class.allow_volume_expansion is allow_exp # NOQA
                 break
             except Exception as e:

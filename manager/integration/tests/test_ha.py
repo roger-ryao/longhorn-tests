@@ -3101,12 +3101,14 @@ def test_engine_image_not_fully_deployed_perform_dr_restoring_expanding_volume(c
     volume1 = wait_for_volume_degraded(client, volume1.name)
     for i in range(RETRY_COUNTS_SHORT * 2):
         volume1 = client.by_id_volume(volume1.name)
-        assert len(volume1.replicas) == 2
+        replica_count = len(volume1.replicas)
+        print(f"Replica count for volume '{volume1.name}': {replica_count}")
+        assert replica_count == 2, f"Expected 2 replicas, but found {replica_count}"
         for replica in volume1.replicas:
             if replica.hostId == node_x:
-                assert replica.running is False
+                assert replica.running is False, f"Replica on node {node_x} is still running"
             else:
-                assert replica.running is True
+                assert replica.running is True, f"Replica on node {replica.hostId} is not running"
 
         time.sleep(RETRY_INTERVAL_LONG)
 

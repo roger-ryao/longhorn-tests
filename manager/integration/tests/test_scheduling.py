@@ -2,6 +2,16 @@ import common
 import pytest
 import time
 import copy
+import logging
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+console_handler.setFormatter(formatter)
+logger.addHandler(console_handler)
+
 
 from common import apps_api  # NOQA
 from common import client  # NOQA
@@ -465,10 +475,53 @@ def test_replica_rebuild_per_volume_limit(client, core_api, storage_class, sts_n
                                                replica_count=r_count)
     wait_for_volume_healthy(client, vol_name)
 
-    # Delete 4 volume replicas
-    del vol.replicas[0]
+    logger.info("Current replicas and their status:")
     for r in vol.replicas:
+        logger.info(f"Replica {r.name}: {r.mode} & {r.running}")
+        wait_for_replica_running(client, vol_name, r["name"])
+
+    # Delete 4 out of 5 replicas
+#    num_replicas = len(vol.replicas)
+#    logger.info(f"Total number of replicas: {num_replicas}")
+#    
+#    for i, r in enumerate(vol.replicas[:-1], start=0):
+#        logger.info(f"Deleting replica {i}: {r.name}")
+#    
+#        try:
+#            vol.replicaRemove(name=r.name)
+#            logger.info(f"Replica {r.name} has been deleted")
+#        except Exception as e:
+#            logger.error(f"Failed to delete replica {r.name}: {str(e)}")
+#    
+#    logger.info("Replica deletion completed")
+#
+    # Delete 4 volume replicas 
+    for i, r in enumerate(vol.replicas[:-1], start=0):
+        logger.info(f"Volume {i} ({vol_name}) status:")
+        logger.info(f"- robustness: {vol.robustness}")
+        logger.info(f"- standby: {vol.standby}")
+        logger.info(f"- numberOfReplicas: {len(vol.replicas)}")
+        logger.info(f"Replica {i} ({r.name}) status:")
+        logger.info(f"- Mode: {r.mode}")
+        logger.info(f"- Running: {str(r.running)}")
+        logger.info(f"- FailedAt: {str(r.failedAt)}")
+        logger.info(f"Deleting replica {i}: {r.name}")
         vol.replicaRemove(name=r.name)
+
+        logger.info(f"Replica {r.name} has been deleted")
+#        try:
+#            vol.replicaRemove(name=r.name)
+#        except Exception as e:
+#            logger.error(f"Failed to delete replica {r.name}", exc_info=True)
+
+
+    # Delete 4 volume replicas 
+#    logger.info(f"Deleting first replica: {vol.replicas[0].name}")
+#    del vol.replicas[0]
+#    for r in vol.replicas:
+#        logger.info(f"Deleting replica: {r.name}")
+#        vol.replicaRemove(name=r.name)
+#        logger.info(f"Replica {r.name} has been deleted")
 
     r_count = 1
     common.wait_for_volume_replicas_mode(client, vol_name, 'RW',

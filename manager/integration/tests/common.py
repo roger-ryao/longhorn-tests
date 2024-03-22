@@ -1933,12 +1933,14 @@ def wait_for_volume_detached_unknown(client, name):
 
 
 def wait_for_volume_healthy(client, name, retry_count=RETRY_COUNTS):
+    print(f"Waiting for volume {name} to become healthy.")
     wait_for_volume_status(client, name,
                            VOLUME_FIELD_STATE,
                            VOLUME_STATE_ATTACHED, retry_count)
     wait_for_volume_status(client, name,
                            VOLUME_FIELD_ROBUSTNESS,
                            VOLUME_ROBUSTNESS_HEALTHY, retry_count)
+    print(f"Volume {name} is healthy.")
     return wait_for_volume_endpoint(client, name)
 
 
@@ -1976,11 +1978,13 @@ def wait_for_volume_status(client, name, key, value,
     wait_for_volume_creation(client, name)
     for i in range(retry_count):
         volume = client.by_id_volume(name)
+        print(f"Retry {i + 1}/{retry_count}: Checking volume status...")
+        print(f"Volume {name} - {key}: {volume[key]}, Expected: {value}")
         if volume[key] == value:
             break
         time.sleep(RETRY_INTERVAL)
-    assert volume[key] == value, f" value={value}\n. \
-            volume[key]={volume[key]}\n. volume={volume}"
+    assert volume[key] == value, f"Volume {name} - {key} did not reach the expected value. \
+        Expected: {value}, Actual: {volume[key]}\nVolume Details: {volume}"
     return volume
 
 
@@ -3129,10 +3133,10 @@ def wait_for_backup_volume_backing_image_synced(
     completed = False
     for _ in range(retry_count):
         bv = find_backup_volume(client, volume_name)
-        assert bv is not None
-        if bv.backingImageName == backing_image:
-            completed = True
-            break
+        if bv is not None:
+            if bv.backingImageName == backing_image:
+                completed = True
+                break
         time.sleep(RETRY_BACKUP_INTERVAL)
     assert completed is True, f" Backup Volume = {bv}," \
                               f" Backing Image = {backing_image}," \
@@ -4560,22 +4564,29 @@ def wait_for_rebuild_complete(client, volume_name, retry_count=RETRY_COUNTS):
         rebuild_statuses = v.rebuildStatus
         for status in rebuild_statuses:
             if status.state == "complete":
+                print(f"Rebuild for replica {status.replica} is complete.")
                 assert status.progress == 100
                 assert not status.error
                 assert not status.isRebuilding
                 completed += 1
             elif status.state == "":
+                print(f"Rebuild status for replica {status.replica} is not available.")
                 assert not status.error
                 assert not status.isRebuilding
                 completed += 1
             elif status.state == "in_progress":
+                print(f"Rebuild for replica {status.replica} is in progress.")
+                print(f"Rebuild progress: {status.progress}")
                 assert status.isRebuilding
             else:
+                print(f"Rebuild for replica {status.replica} encountered an error.")
                 assert status.state == "error"
                 assert status.error != ""
                 assert not status.isRebuilding
         if completed == len(rebuild_statuses):
+            print(f"All replicas have completed rebuilding for volume: {volume_name}")
             break
+        print(f"Retry count: {i + 1} of {retry_count}")  # Print the current retry count
         time.sleep(RETRY_INTERVAL)
     assert completed == len(rebuild_statuses)
 
