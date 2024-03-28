@@ -4794,6 +4794,7 @@ def make_deployment_cpu_request(request):
 
 def wait_deployment_replica_ready(apps_api, deployment_name,
                                   desired_replica_count, namespace='default'):  # NOQA
+    ok = False
     for i in range(DEFAULT_DEPLOYMENT_TIMEOUT):
         deployment = apps_api.read_namespaced_deployment(
             name=deployment_name,
@@ -4802,9 +4803,11 @@ def wait_deployment_replica_ready(apps_api, deployment_name,
         # deployment is none if deployment is not yet created
         if deployment is not None and \
            deployment.status.ready_replicas == desired_replica_count:
+            ok = True
             break
 
         time.sleep(DEFAULT_DEPLOYMENT_INTERVAL)
+    assert ok
 
 
 def create_and_wait_deployment(apps_api, deployment_manifest):
