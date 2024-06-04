@@ -256,9 +256,6 @@
   <li><a href="https://longhorn.github.io/longhorn-tests/manual/pre-release/node-not-ready/node-down/physical-node-down/">Physical node down</a></li>
   
 
-  <li><a href="https://longhorn.github.io/longhorn-tests/manual/pre-release/node-not-ready/node-down/single-replica-node-down/">Single replica node down</a></li>
-  
-
   <li><a href="https://longhorn.github.io/longhorn-tests/manual/pre-release/node-not-ready/node-down/node-deletion/">Test node deletion</a></li>
   
 
@@ -794,6 +791,9 @@
   <li><a href="https://longhorn.github.io/longhorn-tests/manual/release-specific/v1.7.0/test-kubelet-restart-no-pending-pod-event/">restarting Kubelet should not result in repeated &ldquo;no Pending workload pods &hellip;&rdquo; event for the workload pod.</a></li>
   
 
+  <li><a href="https://longhorn.github.io/longhorn-tests/manual/release-specific/v1.7.0/test-support-bundle-node-collection-timeout/">Support bundle node collection timeout</a></li>
+  
+
 </ul>
 
   
@@ -820,54 +820,66 @@
 
 
 <main style="padding: 1%; width: 70%;">
-  <h1 id="title">Single replica node down</h1>
+  <h1 id="title">Support bundle node collection timeout</h1>
   <div>
     <article id="content">
-       <h2 id="related-issues">Related Issues</h2>
-<p><a href="https://github.com/longhorn/longhorn/issues/2329">https://github.com/longhorn/longhorn/issues/2329</a>
-<a href="https://github.com/longhorn/longhorn/issues/2309">https://github.com/longhorn/longhorn/issues/2309</a>
-<a href="https://github.com/longhorn/longhorn/issues/3957">https://github.com/longhorn/longhorn/issues/3957</a></p>
-<h2 id="default-setting">Default Setting</h2>
-<p><code>Automatic salvage</code> is enabled.</p>
-<h2 id="node-restartdown-scenario-with-pod-deletion-policy-when-node-is-down-set-to-default-value-do-nothing">Node restart/down scenario with <code>Pod Deletion Policy When Node is Down</code> set to default value <code>do-nothing</code>.</h2>
-<ol>
-<li>Create RWO|RWX volume with replica count = 1 &amp; data locality = enabled|disabled|strict-local.
+       <p>When the timeout expires, the support bundle generation will proceed without requiring the collection of node bundles.</p>
+<h2 id="related-issues">Related issues</h2>
 <ul>
-<li>For data locality = strict-local, use RWO volume to do test.</li>
+<li><a href="https://github.com/longhorn/longhorn/issues/8623">https://github.com/longhorn/longhorn/issues/8623</a></li>
 </ul>
-</li>
-<li>Create deployment|statefulset for volume.</li>
-<li>Power down node of volume/replica.</li>
-<li>The workload pod will get stuck in the <code>terminating</code> state.</li>
-<li>Volume will fail to attach since volume is not ready (i.e remains faulted, since single replica is on downed node).</li>
-<li>Power up node or delete the workload pod so that kubernetes will recreate pod on another node.</li>
-<li>Verify auto salvage finishes (i.e pod completes start).</li>
-<li>Verify volume attached &amp; accessible by pod (i.e test data is available).
-<ul>
-<li>For data locality = strict-local volume, volume will keep in detaching, attaching status for about 10 minutes, after volume attached to node which replica located, check volume healthy and pod status.</li>
-</ul>
-</li>
-</ol>
-<h2 id="node-restartdown-scenario-with-pod-deletion-policy-when-node-is-down-set-to-delete-both-statefulset-and-deployment-pod">Node restart/down scenario with <code>Pod Deletion Policy When Node is Down</code> set to <code>delete-both-statefulset-and-deployment-pod</code></h2>
-<ol>
-<li>Create RWO|RWX volume with replica count = 1 &amp; data locality = enabled|disabled|strict-local.
-<ul>
-<li>For data locality = strict-local, use RWO volume to do test.</li>
-</ul>
-</li>
-<li>Create deployment|statefulset for volume.</li>
-<li>Power down node of volume/replica.</li>
-<li>Volume will become faulted.</li>
-<li>Wait for pod deletion &amp; recreation on another node.
-The pod recreation will not happen immediately.</li>
-<li>The replacement workload pod will get stuck in the <code>ContainerCreating</code> state.</li>
-<li>Power on node of volume/replica.</li>
-<li>Verify the auto salvage finishes for volumes.</li>
-<li>Verify volume attached &amp; accessible by pod (i.e test data is available).</li>
-</ol>
+<h2 id="test-support-bundle-image-supports-node-collection-timeout">Test support bundle image supports node collection timeout</h2>
+<p><strong>Given</strong> Run the support bundle manager image (version 0.0.38 or later) using Docker.</p>
+<pre tabindex="0"><code>&gt; docker run -it longhornio/support-bundle-kit:v0.0.38 bash
+</code></pre><p><strong>When</strong> Execute <code>support-bundle-kit manager --help</code>.<br>
+<strong>Then</strong> The help menu displays the <code>--node-timeout</code> option.</p>
+<pre tabindex="0"><code>&gt; support-bundle-kit manager --help | grep node-timeout
+      --node-timeout duration       The support bundle node collection time out
+</code></pre><h2 id="test-support-bundle-node-collection-timeout-setting">Test <code>support-bundle-node-collection-timeout</code> setting</h2>
+<p><strong>Given</strong> Simulate the node bundle blockage by patching the <a href="https://github.com/rancher/support-bundle-kit">rancher/support-bundle-kit</a> code base and create an image.</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4;"><code class="language-diff" data-lang="diff"><span style="display:flex;"><span>diff --git a/pkg/manager/manager.go b/pkg/manager/manager.go
+</span></span><span style="display:flex;"><span>index 87e7b147..1835820b 100644
+</span></span><span style="display:flex;"><span><span style="color:#f92672">--- a/pkg/manager/manager.go
+</span></span></span><span style="display:flex;"><span><span style="color:#f92672"></span><span style="color:#a6e22e">+++ b/pkg/manager/manager.go
+</span></span></span><span style="display:flex;"><span><span style="color:#a6e22e"></span><span style="color:#75715e">@@ -324,7 +324,7 @@ func (m *SupportBundleManager) completeNode(node string) {
+</span></span></span><span style="display:flex;"><span><span style="color:#75715e"></span>        _, ok := m.expectedNodes[node]
+</span></span><span style="display:flex;"><span>        if ok {
+</span></span><span style="display:flex;"><span>                logrus.Debugf(&#34;Complete node %s&#34;, node)
+</span></span><span style="display:flex;"><span><span style="color:#f92672">-               delete(m.expectedNodes, node)
+</span></span></span><span style="display:flex;"><span><span style="color:#f92672"></span><span style="color:#a6e22e">+               // delete(m.expectedNodes, node)
+</span></span></span><span style="display:flex;"><span><span style="color:#a6e22e"></span>        } else {
+</span></span><span style="display:flex;"><span>                logrus.Warnf(&#34;Complete an unknown node %s&#34;, node)
+</span></span><span style="display:flex;"><span>        }
+</span></span></code></pre></div><p><strong>And</strong> Configure <code>support-bundle-manager-image</code> setting value to use the image created in the previous step.</p>
+<pre tabindex="0"><code>&gt; kubectl -n longhorn-system edit settings.longhorn.io support-bundle-manager-image
 
+&gt; kubectl -n longhorn-system get settings.longhorn.io support-bundle-manager-image
+NAME                           VALUE                                         AGE
+support-bundle-manager-image   c3y1huang/research:48-lh-support-bundle-kit   7d23h
+</code></pre><p><strong>And</strong> Set <code>support-bundle-node-collection-timeout</code> setting value to 5.</p>
+<pre tabindex="0"><code class="language-bsah" data-lang="bsah">&gt; kubectl -n longhorn-system edit settings.longhorn.io support-bundle-node-collection-timeout
+
+&gt; kubectl -n longhorn-system get settings.longhorn.io support-bundle-node-collection-timeout
+NAME                                     VALUE   AGE
+support-bundle-node-collection-timeout   5       1h
+</code></pre><p><strong>When</strong> Generate a support bundle using Longhorn UI.<br>
+<strong>And</strong> Monitor the support bundle manager logs.</p>
+<pre tabindex="0"><code>&gt; kubectl -n longhorn-system logs `kubectl -n longhorn-system get pod -l app=support-bundle-manager --no-headers | awk &#39;{print $1}&#39;` -f
+</code></pre><p><strong>Then</strong> The support bundle is generated after the configured timeout.</p>
+<pre tabindex="0"><code>&gt; kubectl -n longhorn-system get pod -l app=support-bundle-agent
+NAME                                                            READY   STATUS    RESTARTS   AGE
+supportbundle-agent-support-bundle-2024-05-28t03-01-40z-d7x7x   1/1     Running   0          5m1s
+supportbundle-agent-support-bundle-2024-05-28t03-01-40z-jxj6c   1/1     Running   0          5m1s
+supportbundle-agent-support-bundle-2024-05-28t03-01-40z-mmrll   1/1     Running   0          5m1s
+&gt; kubectl -n longhorn-system get pod -l app=support-bundle-agent
+NAME                                                            READY   STATUS        RESTARTS   AGE
+supportbundle-agent-support-bundle-2024-05-28t03-01-40z-mmrll   0/1     Terminating   0          5m2s
+supportbundle-agent-support-bundle-2024-05-28t03-01-40z-jxj6c   0/1     Terminating   0          5m2s
+</code></pre><p><strong>And</strong> A timeout log is recorded in the support bundle manager pod logs.</p>
+<pre tabindex="0"><code>time=&#34;2024-05-28T03:07:07Z&#34; level=info msg=&#34;Some nodes are timeout, not all node bundles are received.&#34;
+</code></pre>
     </article>
-  <a href="https://github.com/longhorn/longhorn-tests/edit/master/docs/content/manual/pre-release/node-not-ready/node-down/single-replica-node-down.md" target="_blank" title="Edit on Github" style="font-size:smaller;float:right;padding-right:3%">[Edit]</a>
+  <a href="https://github.com/longhorn/longhorn-tests/edit/master/docs/content/manual/release-specific/v1.7.0/test-support-bundle-node-collection-timeout.md" target="_blank" title="Edit on Github" style="font-size:smaller;float:right;padding-right:3%">[Edit]</a>
   </div>
 
     
