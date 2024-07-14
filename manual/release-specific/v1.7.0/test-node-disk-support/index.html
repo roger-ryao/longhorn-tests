@@ -21,28 +21,28 @@
   
     <ul>
 
-  <li><a href="https://longhorn.github.io/longhorn-tests/manual/functional-test-cases/deployment/"> Deployment of Longhorn </a></li>
+  <li><a href="https://longhorn.github.io/longhorn-tests/manual/functional-test-cases/deployment/"> Deployment of Longhorn  </a></li>
   
 
-  <li><a href="https://longhorn.github.io/longhorn-tests/manual/functional-test-cases/ui/"> UI </a></li>
+  <li><a href="https://longhorn.github.io/longhorn-tests/manual/functional-test-cases/ui/">UI  </a></li>
   
 
-  <li><a href="https://longhorn.github.io/longhorn-tests/manual/functional-test-cases/volume/"> Volume </a></li>
+  <li><a href="https://longhorn.github.io/longhorn-tests/manual/functional-test-cases/volume/">Volume  </a></li>
   
 
-  <li><a href="https://longhorn.github.io/longhorn-tests/manual/functional-test-cases/kubernetes/"> Kubernetes </a></li>
+  <li><a href="https://longhorn.github.io/longhorn-tests/manual/functional-test-cases/kubernetes/">Kubernetes  </a></li>
   
 
-  <li><a href="https://longhorn.github.io/longhorn-tests/manual/functional-test-cases/backup/"> Backup </a></li>
+  <li><a href="https://longhorn.github.io/longhorn-tests/manual/functional-test-cases/backup/">Backup  </a></li>
   
 
-  <li><a href="https://longhorn.github.io/longhorn-tests/manual/functional-test-cases/node/"> Node </a></li>
+  <li><a href="https://longhorn.github.io/longhorn-tests/manual/functional-test-cases/node/">Node  </a></li>
   
 
-  <li><a href="https://longhorn.github.io/longhorn-tests/manual/functional-test-cases/scheduling/"> Scheduling </a></li>
+  <li><a href="https://longhorn.github.io/longhorn-tests/manual/functional-test-cases/scheduling/">Scheduling  </a></li>
   
 
-  <li><a href="https://longhorn.github.io/longhorn-tests/manual/functional-test-cases/upgrade/"> Upgrade </a></li>
+  <li><a href="https://longhorn.github.io/longhorn-tests/manual/functional-test-cases/upgrade/">Upgrade  </a></li>
   
 
   <li><a href="https://longhorn.github.io/longhorn-tests/manual/functional-test-cases/monitoring/">Monitoring</a></li>
@@ -140,9 +140,6 @@
   <li><a href="https://longhorn.github.io/longhorn-tests/manual/pre-release/ha/ha-volume-migration/">HA Volume Migration</a></li>
   
 
-  <li><a href="https://longhorn.github.io/longhorn-tests/manual/pre-release/ha/replica-rebuilding/">Replica Rebuilding</a></li>
-  
-
 </ul>
 
   
@@ -229,17 +226,6 @@
 
   
 
-  <li><a href="https://longhorn.github.io/longhorn-tests/manual/pre-release/node-not-ready/node-disconnection/">Node Disconnection</a></li>
-  
-    <ul>
-
-  <li><a href="https://longhorn.github.io/longhorn-tests/manual/pre-release/node-not-ready/node-disconnection/node-disconnection/">Node disconnection test</a></li>
-  
-
-</ul>
-
-  
-
   <li><a href="https://longhorn.github.io/longhorn-tests/manual/pre-release/node-not-ready/node-down/">Node Down</a></li>
   
     <ul>
@@ -268,9 +254,6 @@
     <ul>
 
   <li><a href="https://longhorn.github.io/longhorn-tests/manual/pre-release/node-not-ready/node-restart/dr-volume-node-rebooted/">#1366 &amp;&amp; #1328 The node the DR volume attached to is rebooted</a></li>
-  
-
-  <li><a href="https://longhorn.github.io/longhorn-tests/manual/pre-release/node-not-ready/node-restart/physical-node-reboot/">Physical node reboot</a></li>
   
 
 </ul>
@@ -788,7 +771,16 @@
   <li><a href="https://longhorn.github.io/longhorn-tests/manual/release-specific/v1.7.0/test-gke-container-optimized-os-dependency-setup/">Dependency setup for GKE cluster using Container-Optimized OS as base image</a></li>
   
 
+  <li><a href="https://longhorn.github.io/longhorn-tests/manual/release-specific/v1.7.0/test-longhorn-cli-longhornctl/">Longhorn Commandline Interface (longhornctl)</a></li>
+  
+
+  <li><a href="https://longhorn.github.io/longhorn-tests/manual/release-specific/v1.7.0/test-node-disk-support/">Node Disk Support</a></li>
+  
+
   <li><a href="https://longhorn.github.io/longhorn-tests/manual/release-specific/v1.7.0/test-kubelet-restart-no-pending-pod-event/">restarting Kubelet should not result in repeated &ldquo;no Pending workload pods &hellip;&rdquo; event for the workload pod.</a></li>
+  
+
+  <li><a href="https://longhorn.github.io/longhorn-tests/manual/release-specific/v1.7.0/test-storage-network-support-for-rwx-volume/">Storage Network Support for RWX Volume</a></li>
   
 
   <li><a href="https://longhorn.github.io/longhorn-tests/manual/release-specific/v1.7.0/test-support-bundle-node-collection-timeout/">Support bundle node collection timeout</a></li>
@@ -823,76 +815,171 @@
 
 
 <main style="padding: 1%; width: 70%;">
-  <h1 id="title">Node disconnection test</h1>
+  <h1 id="title">Node Disk Support</h1>
   <div>
     <article id="content">
-       <p><a href="https://github.com/longhorn/longhorn/issues/1545">https://github.com/longhorn/longhorn/issues/1545</a>
-For disconnect node : <a href="https://github.com/longhorn/longhorn/files/4864127/network_down.sh.zip">https://github.com/longhorn/longhorn/files/4864127/network_down.sh.zip</a></p>
-<p>If auto-salvage is disabled, the behavior after the node disconnection depends on all replicas are in ERROR state or not.</p>
-<p>(1) If all replicas are in ERROR state, the volume would remain in detached/faulted state if auto-salvage is disabled.</p>
-<p>(2) If there is any healthy replica, the volume would start the replica rebuild process(if necessary) after node back.</p>
-<p>What makes all replicas in ERROR state? When there is data writing during the disconnection:</p>
-<p>(1) If the engine process is unable to talk with a replica (the engine process and the replica are on the different nodes), the engine process will mark the replica as ERROR.</p>
-<p>(2) But if the engine process is still able to talk with a replica (the engine process and the replica are on the same node), the engine process will just mark the replica as UNKNOWN state, and the replica will recover to RUNNING state after the network connection is back. Then other replicas can be rebuilt from the replica.</p>
-<p>So we have 2 * 2 test cases for node disconnection + disabled auto-salvage:</p>
-<p>(Case 1-1) there is no replica on the attached node + data writing during the disconnection -&gt; all replicas become ERROR -&gt; no auto-reattach after the disconnection</p>
-<p>(Case 1-2) there is a replica on the attached node + data writing during the disconnection -&gt; one replica can recover to healthy -&gt; the volume become degraded and start replica rebuilding then become healthy</p>
-<p>(Case 2-1) there is no replica on the attached node + no data writing during the disconnection -&gt; other replicas are still healthy -&gt; the volume in attached state, robustness changed from unknown to healthy</p>
-<p>(Case 2-2) there is a replica on the attached node + no data writing during the disconnection -&gt; other replicas are still healthy -&gt; the volume in attached state, robustness changed from unknown to healthy</p>
-<h3 id="case-1-1">Case 1-1:</h3>
-<ol>
-<li>Disable auto-salvage.</li>
-<li>Create a volume named test-1 with 2 replicas on the 1st and the 2nd node.</li>
-<li>Attach the volume to the 3rd node.</li>
-<li>Keep writing data directly to the volume. (sudo dd if=/dev/urandom of=/dev/longhorn/test-1 bs=2M count=2048)</li>
-<li>Disconnect the network of the node that the volume attached to for 100 seconds during the data writing. (sudo nohup ./network_down.sh 100)</li>
-<li>Wait for the node back.</li>
-<li>The volume should remain detached, and all replicas remain in ERROR state.</li>
-</ol>
-<h3 id="case-1-2">Case 1-2:</h3>
-<ol>
-<li>Disable auto-salvage.</li>
-<li>Create a volume named test-1 with 3 replicas.</li>
-<li>Attach the volume to a node.</li>
-<li>Keep writing data directly to the volume. (sudo dd if=/dev/urandom of=/dev/longhorn/test-1 bs=2M count=2048)</li>
-<li>Disconnect the network of the node that the volume attached to for 100 seconds during the data writing. (sudo nohup ./network_down.sh 100)</li>
-<li>Wait for the node back.</li>
-<li>The volume will be in degraded state and then started the replica rebuilding process.</li>
-<li>The volume become healthy.</li>
-</ol>
-<h3 id="case-2-1">Case 2-1:</h3>
-<ol>
-<li>Disable auto-salvage.</li>
-<li>Create a volume named test-1 with 2 replicas on the 1st and the 2nd node.</li>
-<li>Attach the volume to the 3rd node.</li>
-<li>No need to write data to the volume. Directly disconnect the network of the node that the volume attached to for 100 seconds. (sudo nohup ./network_down.sh 100)</li>
-<li>Wait for the node back.</li>
-<li>The volume will be in an attached state with its robustness unknown at first, then the volume become healthy.</li>
-</ol>
-<h3 id="case-2-2">Case 2-2:</h3>
-<ol>
-<li>Disable auto-salvage.</li>
-<li>Create a volume named test-1 with 3 replicas.</li>
-<li>Attach the volume to a node.</li>
-<li>No need to write data to the volume. Directly disconnect the network of the node that the volume attached to for 100 seconds. (sudo nohup ./network_down.sh 100)</li>
-<li>Wait for the node back.</li>
-<li>The volume will be in an attached state with its robustness unknown at first, then the volume become healthy.</li>
-</ol>
-<h3 id="case-3">Case 3:</h3>
-<ol>
-<li>Launch Longhorn.</li>
-<li>Use statefulset launch a pod with the volume and write some data.</li>
-<li>Run command &lsquo;sync&rsquo; in pod, make sure data fulshed.</li>
-<li>Disconnect the node that the volume attached to for 100 seconds.</li>
-<li>Wait for the node back and the volume reattachment.</li>
-<li>The volume will be in an attached state with its robustness unknown at first, then the volume become healthy</li>
-<li>Verify the data and the pod still works fine.</li>
-<li>Repeat step 2~6 for 3 times.</li>
-<li>Create, Attach, and detach other volumes to the recovered node. All volumes should work fine.</li>
-</ol>
-
+       <p>Longhorn now enhances filesystem operations, storage performance, and compatibility by supporting the addition and management of various disk types on nodes, including <code>AIO</code>, <code>NVMe</code>, and <code>VirtIO</code>.</p>
+<h2 id="related-issues">Related issues</h2>
+<ul>
+<li><a href="https://github.com/longhorn/longhorn/issues/7672">https://github.com/longhorn/longhorn/issues/7672</a></li>
+</ul>
+<h2 id="precondition">Precondition</h2>
+<ul>
+<li><a href="https://longhorn.io/docs/1.7.0/v2-data-engine/quick-start/#prerequisites">https://longhorn.io/docs/1.7.0/v2-data-engine/quick-start/#prerequisites</a></li>
+</ul>
+<h2 id="test-the-detection-of-nvme-disk">Test the detection of <code>NVMe</code> disk</h2>
+<p><strong>When</strong> Create a LH clusters using AWS EC2 <code>c5d.2xlarge</code> instance with a <code>NVMe</code> disk
+<strong>And</strong> Check available block devices on a system by <code>lsblk</code> or <code>fdisk -l</code></p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-bash" data-lang="bash"><span style="color:#75715e"># lsblk</span>
+NAME         MAJ:MIN RM   SIZE RO TYPE MOUNTPOINTS
+loop0          7:0    <span style="color:#ae81ff">0</span>  55.7M  <span style="color:#ae81ff">1</span> loop /snap/core18/2812
+loop1          7:1    <span style="color:#ae81ff">0</span>  25.2M  <span style="color:#ae81ff">1</span> loop /snap/amazon-ssm-agent/7983
+loop2          7:2    <span style="color:#ae81ff">0</span>  38.7M  <span style="color:#ae81ff">1</span> loop /snap/snapd/21465
+loop3          7:3    <span style="color:#ae81ff">0</span>    20G  <span style="color:#ae81ff">0</span> loop 
+nvme1n1      259:0    <span style="color:#ae81ff">0</span> 186.3G  <span style="color:#ae81ff">0</span> disk 
+nvme0n1      259:1    <span style="color:#ae81ff">0</span>   100G  <span style="color:#ae81ff">0</span> disk 
+├─nvme0n1p1  259:2    <span style="color:#ae81ff">0</span>    99G  <span style="color:#ae81ff">0</span> part /
+├─nvme0n1p14 259:3    <span style="color:#ae81ff">0</span>     4M  <span style="color:#ae81ff">0</span> part 
+├─nvme0n1p15 259:4    <span style="color:#ae81ff">0</span>   106M  <span style="color:#ae81ff">0</span> part /boot/efi
+└─nvme0n1p16 259:5    <span style="color:#ae81ff">0</span>   913M  <span style="color:#ae81ff">0</span> part /boot
+</code></pre></div><p><strong>And</strong> Enable <code>v2 data engine</code>
+<strong>And</strong> Get the BDF of the disk by <code>ls -al /sys/block</code>.</p>
+<pre tabindex="0"><code class="language-bsah" data-lang="bsah"># ls -al /sys/block/
+lrwxrwxrwx  1 root root 0 Jul  1 07:07 loop7 -&gt; ../devices/virtual/block/loop7
+lrwxrwxrwx  1 root root 0 Jul  1 07:07 nvme0n1 -&gt; ../devices/pci0000:00/0000:00:04.0/nvme/nvme0/nvme0n1
+lrwxrwxrwx  1 root root 0 Jul  1 07:07 nvme1n1 -&gt; ../devices/pci0000:00/0000:00:1f.0/nvme/nvme1/nvme1n1
+</code></pre><p><strong>Then</strong> Add the disk to <code>node.spec.disks</code></p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-yaml" data-lang="yaml">    <span style="color:#f92672">disk-9</span>:
+      <span style="color:#f92672">allowScheduling</span>: <span style="color:#66d9ef">true</span>
+      <span style="color:#f92672">diskDriver</span>: <span style="color:#ae81ff">auto</span>
+      <span style="color:#f92672">diskType</span>: <span style="color:#ae81ff">block</span>
+      <span style="color:#f92672">evictionRequested</span>: <span style="color:#66d9ef">false</span>
+      <span style="color:#f92672">path</span>: <span style="color:#ae81ff">0000</span>:<span style="color:#ae81ff">00</span>:<span style="color:#ae81ff">1f.0</span>
+      <span style="color:#f92672">storageReserved</span>: <span style="color:#ae81ff">0</span>
+      <span style="color:#f92672">tags</span>: []
+</code></pre></div><p><strong>And</strong> Check the <code>node.status.diskStatus</code>. The disk is detected without any error, and the <code>diskDriver</code> is <code>nvme</code>.</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-yaml" data-lang="yaml">      <span style="color:#f92672">disk-9</span>:
+        <span style="color:#f92672">conditions</span>:
+        - <span style="color:#f92672">lastProbeTime</span>: <span style="color:#e6db74">&#34;&#34;</span>
+          <span style="color:#f92672">lastTransitionTime</span>: <span style="color:#e6db74">&#34;2024-07-02T09:00:32Z&#34;</span>
+          <span style="color:#f92672">message</span>: <span style="color:#ae81ff">Disk disk-9(0000:00:1f.0) on node ryao-master-w3-2e5975a5-88vmf</span>
+            <span style="color:#ae81ff">is ready</span>
+          <span style="color:#f92672">reason</span>: <span style="color:#e6db74">&#34;&#34;</span>
+          <span style="color:#f92672">status</span>: <span style="color:#e6db74">&#34;True&#34;</span>
+          <span style="color:#f92672">type</span>: <span style="color:#ae81ff">Ready</span>
+        - <span style="color:#f92672">lastProbeTime</span>: <span style="color:#e6db74">&#34;&#34;</span>
+          <span style="color:#f92672">lastTransitionTime</span>: <span style="color:#e6db74">&#34;2024-07-02T09:00:32Z&#34;</span>
+          <span style="color:#f92672">message</span>: <span style="color:#ae81ff">Disk disk-9(0000:00:1f.0) on node ryao-master-w3-2e5975a5-88vmf</span>
+            <span style="color:#ae81ff">is schedulable</span>
+          <span style="color:#f92672">reason</span>: <span style="color:#e6db74">&#34;&#34;</span>
+          <span style="color:#f92672">status</span>: <span style="color:#e6db74">&#34;True&#34;</span>
+          <span style="color:#f92672">type</span>: <span style="color:#ae81ff">Schedulable</span>
+        <span style="color:#f92672">diskDriver</span>: <span style="color:#ae81ff">nvme</span>
+        <span style="color:#f92672">diskName</span>: <span style="color:#ae81ff">disk-3n1</span>
+        <span style="color:#f92672">diskPath</span>: <span style="color:#ae81ff">0000</span>:<span style="color:#ae81ff">00</span>:<span style="color:#ae81ff">1f.0</span>
+        <span style="color:#f92672">diskType</span>: <span style="color:#ae81ff">block</span>
+        <span style="color:#f92672">diskUUID</span>: <span style="color:#ae81ff">eae57130-dacb-4868-92b8-58d74b1382f8</span>
+        <span style="color:#f92672">filesystemType</span>: <span style="color:#e6db74">&#34;&#34;</span>
+        <span style="color:#f92672">instanceManagerName</span>: <span style="color:#ae81ff">instance-manager-70555e5a4cb268c931ccebb4751e78a7</span>
+        <span style="color:#f92672">scheduledReplica</span>: {}
+        <span style="color:#f92672">storageAvailable</span>: <span style="color:#ae81ff">199124582400</span>
+        <span style="color:#f92672">storageMaximum</span>: <span style="color:#ae81ff">199216857088</span>
+        <span style="color:#f92672">storageScheduled</span>: <span style="color:#ae81ff">0</span>
+</code></pre></div><h2 id="test-the-detection-of-virtio-disk">Test the detection of <code>VirtIO</code> disk</h2>
+<p><strong>When</strong> Create a LH clusters using <code>QEMU</code> vm machines with two <code>VirtiIO</code> disk.
+<strong>And</strong> Check available block devices on a system by <code>lsblk</code> or <code>fdisk -l</code></p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-bash" data-lang="bash"><span style="color:#75715e"># lsblk </span>
+vda                 252:0    <span style="color:#ae81ff">0</span>    50G  <span style="color:#ae81ff">0</span> disk 
+├─vda1              252:1    <span style="color:#ae81ff">0</span>     1M  <span style="color:#ae81ff">0</span> part 
+├─vda2              252:2    <span style="color:#ae81ff">0</span>     2G  <span style="color:#ae81ff">0</span> part /boot
+└─vda3              252:3    <span style="color:#ae81ff">0</span>    48G  <span style="color:#ae81ff">0</span> part 
+  └─ubuntu--vg-ubuntu--lv
+                    253:0    <span style="color:#ae81ff">0</span>    48G  <span style="color:#ae81ff">0</span> lvm  /var/lib/kubelet/pods/e864c8e7-c552-4082-9788-158e0937625d/volume-subpaths/admin-kubeconfig/proxy/0
+                                              /var/lib/kubelet/pods/e864c8e7-c552-4082-9788-158e0937625d/  volume-subpaths/user-kubeconfig/helm/1
+                                              /
+vdb                 252:16   <span style="color:#ae81ff">0</span>    20G  <span style="color:#ae81ff">0</span> disk
+</code></pre></div><p><strong>And</strong> Enable <code>v2 data engine</code>
+<strong>And</strong> Get the BDF of the disk by <code>ls -al /sys/block</code>.</p>
+<pre tabindex="0"><code class="language-bsah" data-lang="bsah">lrwxrwxrwx  1 root root 0 Jun 28  2024 vda -&gt; ../devices/pci0000:00/0000:00:02.4/0000:05:00.0/virtio3/block/vda
+lrwxrwxrwx  1 root root 0 Jun 28  2024 vdb -&gt; ../devices/pci0000:00/0000:00:02.5/0000:06:00.0/virtio4/block/vdb
+</code></pre><p><strong>Then</strong> Add the disk to <code>node.spec.disks</code></p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-yaml" data-lang="yaml">    <span style="color:#f92672">disk-2</span>:
+      <span style="color:#f92672">allowScheduling</span>: <span style="color:#66d9ef">true</span>
+      <span style="color:#f92672">diskDriver</span>: <span style="color:#ae81ff">auto</span>
+      <span style="color:#f92672">diskType</span>: <span style="color:#ae81ff">block</span>
+      <span style="color:#f92672">evictionRequested</span>: <span style="color:#66d9ef">false</span>
+      <span style="color:#f92672">path</span>: <span style="color:#ae81ff">0000</span>:<span style="color:#ae81ff">06</span>:<span style="color:#ae81ff">00.0</span>
+      <span style="color:#f92672">storageReserved</span>: <span style="color:#ae81ff">0</span>
+      <span style="color:#f92672">tags</span>: []
+</code></pre></div><p><strong>And</strong> Check the <code>node.status.diskStatus</code>. The disk is detected without any error, and the <code>diskDriver</code> is <code>virtio-blk</code>.</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-yaml" data-lang="yaml">    <span style="color:#f92672">disk-2</span>:
+      <span style="color:#f92672">conditions</span>:
+      - <span style="color:#f92672">lastProbeTime</span>: <span style="color:#e6db74">&#34;&#34;</span>
+        <span style="color:#f92672">lastTransitionTime</span>: <span style="color:#e6db74">&#34;2024-07-02T10:30:10Z&#34;</span>
+        <span style="color:#f92672">message</span>: <span style="color:#ae81ff">Disk disk-2(0000:06:00.0) on node w2 is ready</span>
+        <span style="color:#f92672">reason</span>: <span style="color:#e6db74">&#34;&#34;</span>
+        <span style="color:#f92672">status</span>: <span style="color:#e6db74">&#34;True&#34;</span>
+        <span style="color:#f92672">type</span>: <span style="color:#ae81ff">Ready</span>
+      - <span style="color:#f92672">lastProbeTime</span>: <span style="color:#e6db74">&#34;&#34;</span>
+        <span style="color:#f92672">lastTransitionTime</span>: <span style="color:#e6db74">&#34;2024-07-02T10:30:10Z&#34;</span>
+        <span style="color:#f92672">message</span>: <span style="color:#ae81ff">Disk disk-2(0000:06:00.0) on node w2 is schedulable</span>
+        <span style="color:#f92672">reason</span>: <span style="color:#e6db74">&#34;&#34;</span>
+        <span style="color:#f92672">status</span>: <span style="color:#e6db74">&#34;True&#34;</span>
+        <span style="color:#f92672">type</span>: <span style="color:#ae81ff">Schedulable</span>
+      <span style="color:#f92672">diskDriver</span>: <span style="color:#ae81ff">virtio-blk</span>
+      <span style="color:#f92672">diskName</span>: <span style="color:#ae81ff">disk-2</span>
+      <span style="color:#f92672">diskPath</span>: <span style="color:#e6db74">&#34;0000:06:00.0&#34;</span>
+      <span style="color:#f92672">diskType</span>: <span style="color:#ae81ff">block</span>
+      <span style="color:#f92672">diskUUID</span>: <span style="color:#ae81ff">2ff33ec9-040a-4888-bb10-e777eeaa45d6</span>
+      <span style="color:#f92672">filesystemType</span>: <span style="color:#e6db74">&#34;&#34;</span>
+      <span style="color:#f92672">instanceManagerName</span>: <span style="color:#ae81ff">instance-manager-90ba8efa65287c9ab398d99db79cd6de</span>
+      <span style="color:#f92672">scheduledReplica</span>:
+        <span style="color:#f92672">vol-0-r-ae05dad3</span>: <span style="color:#ae81ff">2147483648</span>
+      <span style="color:#f92672">storageAvailable</span>: <span style="color:#ae81ff">21181235200</span>
+      <span style="color:#f92672">storageMaximum</span>: <span style="color:#ae81ff">21389901824</span>
+      <span style="color:#f92672">storageScheduled</span>: <span style="color:#ae81ff">2147483648</span>
+</code></pre></div><h2 id="test-disk-driver-aio">Test disk driver <code>aio</code></h2>
+<p><strong>When</strong> <a href="https://longhorn.io/docs/1.7.0/v2-data-engine/quick-start/#add-block-type-disks-in-longhorn-nodes">Add block-type Disks in Longhorn Nodes</a>.
+<strong>Then</strong> Add the disk to <code>node.spec.disks</code></p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-yaml" data-lang="yaml">    <span style="color:#f92672">disk-8</span>:
+      <span style="color:#f92672">allowScheduling</span>: <span style="color:#66d9ef">true</span>
+      <span style="color:#f92672">diskDriver</span>: <span style="color:#ae81ff">auto</span>
+      <span style="color:#f92672">diskType</span>: <span style="color:#ae81ff">/dev/loop3</span>
+      <span style="color:#f92672">evictionRequested</span>: <span style="color:#66d9ef">false</span>
+      <span style="color:#f92672">path</span>: <span style="color:#ae81ff">0000</span>:<span style="color:#ae81ff">06</span>:<span style="color:#ae81ff">00.0</span>
+      <span style="color:#f92672">storageReserved</span>: <span style="color:#ae81ff">0</span>
+      <span style="color:#f92672">tags</span>: []
+</code></pre></div><p><strong>And</strong> Check the <code>node.status.diskStatus</code>. The disk is detected without any error, and the <code>diskDriver</code> is <code>aio</code>.</p>
+<div class="highlight"><pre tabindex="0" style="color:#f8f8f2;background-color:#272822;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-yaml" data-lang="yaml">     <span style="color:#f92672">disk-8</span>:
+        <span style="color:#f92672">conditions</span>:
+        - <span style="color:#f92672">lastProbeTime</span>: <span style="color:#e6db74">&#34;&#34;</span>
+          <span style="color:#f92672">lastTransitionTime</span>: <span style="color:#e6db74">&#34;2024-07-02T08:55:32Z&#34;</span>
+          <span style="color:#f92672">message</span>: <span style="color:#ae81ff">Disk disk-8(/dev/loop3) on node ryao-master-w3-2e5975a5-88vmf is</span>
+            <span style="color:#ae81ff">ready</span>
+          <span style="color:#f92672">reason</span>: <span style="color:#e6db74">&#34;&#34;</span>
+          <span style="color:#f92672">status</span>: <span style="color:#e6db74">&#34;True&#34;</span>
+          <span style="color:#f92672">type</span>: <span style="color:#ae81ff">Ready</span>
+        - <span style="color:#f92672">lastProbeTime</span>: <span style="color:#e6db74">&#34;&#34;</span>
+          <span style="color:#f92672">lastTransitionTime</span>: <span style="color:#e6db74">&#34;2024-07-02T08:55:32Z&#34;</span>
+          <span style="color:#f92672">message</span>: <span style="color:#ae81ff">Disk disk-8(/dev/loop3) on node ryao-master-w3-2e5975a5-88vmf is</span>
+            <span style="color:#ae81ff">schedulable</span>
+          <span style="color:#f92672">reason</span>: <span style="color:#e6db74">&#34;&#34;</span>
+          <span style="color:#f92672">status</span>: <span style="color:#e6db74">&#34;True&#34;</span>
+          <span style="color:#f92672">type</span>: <span style="color:#ae81ff">Schedulable</span>
+        <span style="color:#f92672">diskDriver</span>: <span style="color:#ae81ff">aio</span>
+        <span style="color:#f92672">diskName</span>: <span style="color:#ae81ff">disk-8</span>
+        <span style="color:#f92672">diskPath</span>: <span style="color:#ae81ff">/dev/loop3</span>
+        <span style="color:#f92672">diskType</span>: <span style="color:#ae81ff">block</span>
+        <span style="color:#f92672">diskUUID</span>: <span style="color:#ae81ff">1e995e68-512b-4e16-9c39-9b7323587bcf</span>
+        <span style="color:#f92672">filesystemType</span>: <span style="color:#e6db74">&#34;&#34;</span>
+        <span style="color:#f92672">instanceManagerName</span>: <span style="color:#ae81ff">instance-manager-70555e5a4cb268c931ccebb4751e78a7</span>
+        <span style="color:#f92672">scheduledReplica</span>: {}
+        <span style="color:#f92672">storageAvailable</span>: <span style="color:#ae81ff">21286092800</span>
+        <span style="color:#f92672">storageMaximum</span>: <span style="color:#ae81ff">21389901824</span>
+        <span style="color:#f92672">storageScheduled</span>: <span style="color:#ae81ff">0</span>
+</code></pre></div>
     </article>
-  <a href="https://github.com/longhorn/longhorn-tests/edit/master/docs/content/manual/pre-release/node-not-ready/node-disconnection/node-disconnection.md" target="_blank" title="Edit on Github" style="font-size:smaller;float:right;padding-right:3%">[Edit]</a>
+  <a href="https://github.com/longhorn/longhorn-tests/edit/master/docs/content/manual/release-specific/v1.7.0/test-node-disk-support.md" target="_blank" title="Edit on Github" style="font-size:smaller;float:right;padding-right:3%">[Edit]</a>
   </div>
 
     
