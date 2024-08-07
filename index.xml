@@ -449,7 +449,7 @@ Test Setup  Deploy the CSI snapshot CRDs, Controller as instructed at https://lo
       <pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate>
       
       <guid>https://longhorn.github.io/longhorn-tests/manual/pre-release/ha/ha-volume-migration/</guid>
-      <description>Basic instructions  Deploy a migratable StorageClass. E.g.:  kind: StorageClass apiVersion: storage.k8s.io/v1 metadata: name: test-sc provisioner: driver.longhorn.io allowVolumeExpansion: true parameters: numberOfReplicas: &amp;#34;3&amp;#34; migratable: &amp;#34;true&amp;#34; Create a migratable Volume. E.g.:  apiVersion: v1 kind: PersistentVolumeClaim metadata: name: test-pvc namespace: default spec: accessModes: - ReadWriteMany volumeMode: Block storageClassName: test-sc resources: requests: storage: 1Gi Attach the volume to a node and wait for it to become running. E.g.:  apiVersion: storage.k8s.io/v1 kind: VolumeAttachment metadata: name: test-va-1 spec: attacher: driver.</description>
+      <description>Related issues  https://github.com/longhorn/longhorn/issues/3401 https://github.com/longhorn/longhorn/issues/8735  Basic instructions  Deploy a migratable StorageClass. E.g.:  kind: StorageClass apiVersion: storage.k8s.io/v1 metadata: name: test-sc provisioner: driver.longhorn.io allowVolumeExpansion: true parameters: numberOfReplicas: &amp;#34;3&amp;#34; migratable: &amp;#34;true&amp;#34; Create a migratable Volume. E.g.:  apiVersion: v1 kind: PersistentVolumeClaim metadata: name: test-pvc namespace: default spec: accessModes: - ReadWriteMany volumeMode: Block storageClassName: test-sc resources: requests: storage: 1Gi Attach the volume to a node and wait for it to become running.</description>
     </item>
     
     <item>
@@ -668,6 +668,15 @@ Scenario 1- Allow Recurring Job While Volume Is Detached disabled, attached pod 
     </item>
     
     <item>
+      <title>Replica Rebuilding</title>
+      <link>https://longhorn.github.io/longhorn-tests/manual/pre-release/ha/replica-rebuilding/</link>
+      <pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate>
+      
+      <guid>https://longhorn.github.io/longhorn-tests/manual/pre-release/ha/replica-rebuilding/</guid>
+      <description>Basic Rebuilding test  Create and attach a volume. Write a large amount of data to the volume. Disable disk scheduling and the node scheduling for one replica. Crash the replica progress. Verify  the corresponding replica will become ERROR. the volume will keep robustness Degraded.   Enable the disk scheduling. Verify nothing changes. Enable the node scheduling. Verify.  the failed replica is reused by Longhorn. the rebuilding progress in UI page looks good.</description>
+    </item>
+    
+    <item>
       <title>restarting Kubelet should not result in repeated &#34;no Pending workload pods ...&#34; event for the workload pod.</title>
       <link>https://longhorn.github.io/longhorn-tests/manual/release-specific/v1.7.0/test-kubelet-restart-no-pending-pod-event/</link>
       <pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate>
@@ -740,7 +749,7 @@ Test storage network Create AWS instances Given Create VPC.
  Attach to VPC  And Add the internet gateway to the VPC Main route table, Routes.
  Destination 0.0.0.0/0  And Create 2 subnets in the VPC.
  Subnet-1: 10.0.1.0/24 Subnet-2: 10.0.2.0/24  And Launch 3 EC2 instances.
- Use the created VPC Use subnet-1 for network interface 1 Use subnet-2 for network interface 2 Disable Auto-assign public IP Add security group inbound rule to allow All traffic from Anywhere-IPv4 Stop Source/destination check  And Create 3 elastic IPs.</description>
+ Use the created VPC Use subnet-1 for network interface 1 Use subnet-2 for network interface 2 Disable Auto-assign public IP Add security group inbound rule to allow All traffic from Anywhere-IPv4 Stop Source/destination check.</description>
     </item>
     
     <item>
@@ -755,7 +764,7 @@ Test storage network Create AWS instances Given Create VPC.
  Attach to VPC  And Add the internet gateway to the VPC Main route table, Routes.
  Destination 0.0.0.0/0  And Create 2 subnets in the VPC.
  Subnet-1: 10.0.1.0/24 Subnet-2: 10.0.2.0/24  And Launch 3 EC2 instances.
- Use the created VPC Use subnet-1 for network interface 1 Use subnet-2 for network interface 2 Disable Auto-assign public IP Add security group inbound rule to allow All traffic from Anywhere-IPv4 Stop Source/destination check  And Create 3 elastic IPs.</description>
+ Use the created VPC Use subnet-1 for network interface 1 Use subnet-2 for network interface 2 Disable Auto-assign public IP Add security group inbound rule to allow All traffic from Anywhere-IPv4 Stop Source/destination check.</description>
     </item>
     
     <item>

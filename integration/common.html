@@ -614,6 +614,12 @@ if a nonexistent Pod is specified.</p>
 <dd>
 <div class="desc"></div>
 </dd>
+<dt id="tests.common.delete_backup_backing_image"><code class="name flex">
+<span>def <span class="ident">delete_backup_backing_image</span></span>(<span>client, backing_image_name)</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+</dd>
 <dt id="tests.common.delete_backup_volume"><code class="name flex">
 <span>def <span class="ident">delete_backup_volume</span></span>(<span>client, volume_name)</span>
 </code></dt>
@@ -1554,6 +1560,12 @@ Retry if "too many retries error" happened.
 <dd>
 <div class="desc"></div>
 </dd>
+<dt id="tests.common.update_persistent_volume_claim"><code class="name flex">
+<span>def <span class="ident">update_persistent_volume_claim</span></span>(<span>core_api, name, namespace, claim)</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+</dd>
 <dt id="tests.common.update_recurring_job"><code class="name flex">
 <span>def <span class="ident">update_recurring_job</span></span>(<span>client, name, groups, labels, cron='', retain=0, concurrency=0)</span>
 </code></dt>
@@ -1684,6 +1696,12 @@ ref: <a href="https://github.com/longhorn/longhorn/issues/4814">https://github.c
 <dd>
 <div class="desc"></div>
 </dd>
+<dt id="tests.common.wait_for_backup_backing_image_delete"><code class="name flex">
+<span>def <span class="ident">wait_for_backup_backing_image_delete</span></span>(<span>client, name)</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+</dd>
 <dt id="tests.common.wait_for_backup_completion"><code class="name flex">
 <span>def <span class="ident">wait_for_backup_completion</span></span>(<span>client, volume_name, snapshot_name=None, retry_count=300)</span>
 </code></dt>
@@ -1769,7 +1787,7 @@ ref: <a href="https://github.com/longhorn/longhorn/issues/4814">https://github.c
 <div class="desc"></div>
 </dd>
 <dt id="tests.common.wait_for_deployed_engine_image_count"><code class="name flex">
-<span>def <span class="ident">wait_for_deployed_engine_image_count</span></span>(<span>client, image_name, expected_cnt)</span>
+<span>def <span class="ident">wait_for_deployed_engine_image_count</span></span>(<span>client, image_name, expected_cnt, exclude_nodes=[])</span>
 </code></dt>
 <dd>
 <div class="desc"></div>
@@ -2016,6 +2034,12 @@ ref: <a href="https://github.com/longhorn/longhorn/issues/4814">https://github.c
 </dd>
 <dt id="tests.common.wait_for_support_bundle_state"><code class="name flex">
 <span>def <span class="ident">wait_for_support_bundle_state</span></span>(<span>state, node_id, name, client)</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+</dd>
+<dt id="tests.common.wait_for_tainted_node_engine_image_undeployed"><code class="name flex">
+<span>def <span class="ident">wait_for_tainted_node_engine_image_undeployed</span></span>(<span>client, img_name, tainted_node)</span>
 </code></dt>
 <dd>
 <div class="desc"></div>
@@ -2520,6 +2544,7 @@ from the args and kwargs arguments, respectively.</p></div>
 <li><code><a title="tests.common.delete_and_wait_statefulset" href="#tests.common.delete_and_wait_statefulset">delete_and_wait_statefulset</a></code></li>
 <li><code><a title="tests.common.delete_and_wait_volume_attachment" href="#tests.common.delete_and_wait_volume_attachment">delete_and_wait_volume_attachment</a></code></li>
 <li><code><a title="tests.common.delete_backup" href="#tests.common.delete_backup">delete_backup</a></code></li>
+<li><code><a title="tests.common.delete_backup_backing_image" href="#tests.common.delete_backup_backing_image">delete_backup_backing_image</a></code></li>
 <li><code><a title="tests.common.delete_backup_volume" href="#tests.common.delete_backup_volume">delete_backup_volume</a></code></li>
 <li><code><a title="tests.common.delete_crypto_secret" href="#tests.common.delete_crypto_secret">delete_crypto_secret</a></code></li>
 <li><code><a title="tests.common.delete_replica_on_test_node" href="#tests.common.delete_replica_on_test_node">delete_replica_on_test_node</a></code></li>
@@ -2665,6 +2690,7 @@ from the args and kwargs arguments, respectively.</p></div>
 <li><code><a title="tests.common.system_restores_cleanup" href="#tests.common.system_restores_cleanup">system_restores_cleanup</a></code></li>
 <li><code><a title="tests.common.umount_disk" href="#tests.common.umount_disk">umount_disk</a></code></li>
 <li><code><a title="tests.common.update_node_disks" href="#tests.common.update_node_disks">update_node_disks</a></code></li>
+<li><code><a title="tests.common.update_persistent_volume_claim" href="#tests.common.update_persistent_volume_claim">update_persistent_volume_claim</a></code></li>
 <li><code><a title="tests.common.update_recurring_job" href="#tests.common.update_recurring_job">update_recurring_job</a></code></li>
 <li><code><a title="tests.common.update_setting" href="#tests.common.update_setting">update_setting</a></code></li>
 <li><code><a title="tests.common.update_statefulset_manifests" href="#tests.common.update_statefulset_manifests">update_statefulset_manifests</a></code></li>
@@ -2686,6 +2712,7 @@ from the args and kwargs arguments, respectively.</p></div>
 <li><code><a title="tests.common.wait_for_backing_image_disk_cleanup" href="#tests.common.wait_for_backing_image_disk_cleanup">wait_for_backing_image_disk_cleanup</a></code></li>
 <li><code><a title="tests.common.wait_for_backing_image_in_disk_fail" href="#tests.common.wait_for_backing_image_in_disk_fail">wait_for_backing_image_in_disk_fail</a></code></li>
 <li><code><a title="tests.common.wait_for_backing_image_status" href="#tests.common.wait_for_backing_image_status">wait_for_backing_image_status</a></code></li>
+<li><code><a title="tests.common.wait_for_backup_backing_image_delete" href="#tests.common.wait_for_backup_backing_image_delete">wait_for_backup_backing_image_delete</a></code></li>
 <li><code><a title="tests.common.wait_for_backup_completion" href="#tests.common.wait_for_backup_completion">wait_for_backup_completion</a></code></li>
 <li><code><a title="tests.common.wait_for_backup_count" href="#tests.common.wait_for_backup_count">wait_for_backup_count</a></code></li>
 <li><code><a title="tests.common.wait_for_backup_delete" href="#tests.common.wait_for_backup_delete">wait_for_backup_delete</a></code></li>
@@ -2742,6 +2769,7 @@ from the args and kwargs arguments, respectively.</p></div>
 <li><code><a title="tests.common.wait_for_snapshot_purge" href="#tests.common.wait_for_snapshot_purge">wait_for_snapshot_purge</a></code></li>
 <li><code><a title="tests.common.wait_for_support_bundle_cleanup" href="#tests.common.wait_for_support_bundle_cleanup">wait_for_support_bundle_cleanup</a></code></li>
 <li><code><a title="tests.common.wait_for_support_bundle_state" href="#tests.common.wait_for_support_bundle_state">wait_for_support_bundle_state</a></code></li>
+<li><code><a title="tests.common.wait_for_tainted_node_engine_image_undeployed" href="#tests.common.wait_for_tainted_node_engine_image_undeployed">wait_for_tainted_node_engine_image_undeployed</a></code></li>
 <li><code><a title="tests.common.wait_for_volume_attached" href="#tests.common.wait_for_volume_attached">wait_for_volume_attached</a></code></li>
 <li><code><a title="tests.common.wait_for_volume_clone_status" href="#tests.common.wait_for_volume_clone_status">wait_for_volume_clone_status</a></code></li>
 <li><code><a title="tests.common.wait_for_volume_condition_restore" href="#tests.common.wait_for_volume_condition_restore">wait_for_volume_condition_restore</a></code></li>
