@@ -32,14 +32,16 @@ class Base(ABC):
             annotation_key=self.ANNOT_ID
         )
 
-    def set_data_checksum(self, backup_name, checksum):
+    def set_data_checksum(self, backup_name, checksum, annotation_key=None):
+        if annotation_key is None:
+            annotation_key = self.ANNOT_DATA_CHECKSUM
         set_annotation(
             group="longhorn.io",
             version="v1beta2",
             namespace="longhorn-system",
             plural="backups",
             name=backup_name,
-            annotation_key=self.ANNOT_DATA_CHECKSUM,
+            annotation_key=annotation_key,
             annotation_value=checksum
         )
 
@@ -52,6 +54,30 @@ class Base(ABC):
             name=backup_name,
             annotation_key=self.ANNOT_DATA_CHECKSUM,
         )
+
+    def get_all_data_checksums(self, backup_name):
+        data_checksums = {}
+        i = 0
+        while True:
+            annotation_key = f"{self.ANNOT_DATA_CHECKSUM}-{i}"
+            try:
+                checksum = get_annotation_value(
+                    group="longhorn.io",
+                    version="v1beta2",
+                    namespace="longhorn-system",
+                    plural="backups",
+                    name=backup_name,
+                    annotation_key=annotation_key,
+                )
+                if not checksum:
+                    break
+                data_checksums[annotation_key] = checksum
+            except Exception as e:
+                logging.error(f"Getting backup {backup_name} data checksum for {annotation_key} failed: {e}")
+                break
+            i += 1
+        
+        return data_checksums
 
     @abstractmethod
     def get(self, backup_id, volume_name):

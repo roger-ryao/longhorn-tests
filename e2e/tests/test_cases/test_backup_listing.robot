@@ -114,14 +114,46 @@ Write 210 GB data in pod 2
         Write 10 GB data to file ${i} in pod 2
     END
 
-Write 150 GB data in pod 3
+Write 150 GB data in pod 4
     FOR    ${i}    IN RANGE    15
-        Write 10 GB data to file ${i} in pod 3
+        Write 10 GB data to file ${i} in pod 4
     END
 
-Write 40 GB data in pod 3
+Write 40 GB data in pod 4
     FOR    ${i}    IN RANGE    15    19
-        Write 10 GB data to file ${i} in pod 3
+        Write 10 GB data to file ${i} in pod 4
+    END
+
+Create pod ${pod_id} from volume ${source_volume_id} ${source_volume_size} GB volume backup ${backup_id}
+    ${source_volume_name}=    generate_name_with_suffix    volume    ${source_volume_id}
+    ${backup_url}=    get_backup_url    ${backup_id}    ${source_volume_name}
+    ${volume_name}=    generate_name_with_suffix    volume    ${pod_id}
+    create_volume   ${volume_name}    size=${source_volume_size}Gi    numberOfReplicas=3    fromBackup=${backup_url}    dataEngine=${DATA_ENGINE}
+    Create persistentvolume for volume ${pod_id}
+    Create persistentvolumeclaim for volume ${pod_id}
+    Create pod ${pod_id} using volume ${pod_id}
+    Wait for pod ${pod_id} running
+
+Delete pod ${pod_id} and volume ${volume_id}
+    Delete pod ${pod_id}
+    Wait for volume ${volume_id} detached
+    Delete volume ${volume_id}
+
+Pod ${pod_id} data should same as volume ${source_volume_id} backup ${backup_id}
+    ${source_volume_name}=    generate_name_with_suffix    volume    ${source_volume_id}
+    ${backup_name}=    get_backup_name    ${backup_id}    ${source_volume_name}
+    ${backup_data_checksums}=    get_all_data_checksums    ${backup_name}
+    FOR    ${i}    IN RANGE    0    22
+        ${result}=    Run Keyword And Ignore Error    Get From Dictionary    ${backup_data_checksums}    test.longhorn.io/data-checksum-${i}
+        ${status}=    Set Variable    ${result}[0]
+        ${expected_checksum}=    Set Variable    ${result}[1]
+        ${pod_name}=    generate_name_with_suffix    pod    ${pod_id}
+        ${current_checksum}=    get_workload_pod_data_checksum    ${pod_name}    ${i}
+        Log    Comparing file ${i}: expected ${expected_checksum}, got ${current_checksum}
+        Run Keyword If    '${status}' == 'PASS'    
+        ...    Should Be Equal    ${current_checksum}    ${expected_checksum}
+        ...  ELSE
+        ...    Log    Key test.longhorn.io/data-checksum-${i} not found in dictionary
     END
 
 *** Test Cases ***
@@ -151,8 +183,15 @@ Backup listing of volume bigger than 200 Gi
     Then Create pod 2 mount 250 GB volume 2
     And Write 210 GB data in pod 2
     Then Volume 2 backup 0 should be able to create
-    Then Create pod 3 mount 200 GB volume 3
-    And Write 150 GB data in pod 3
-    Then Volume 3 backup 0 should be able to create
-    And Write 40 GB data in pod 3
-    Then Volume 3 backup 1 should be able to create
+    Then Delete pod 2 and volume 2
+    Then Create pod 3 from volume 2 250 GB volume backup 0
+    And Pod 3 data should same as volume 2 backup 0
+    And Delete pod 3 and volume 3
+    Then Create pod 4 mount 200 GB volume 4
+    And Write 150 GB data in pod 4
+    Then Volume 4 backup 0 should be able to create
+    And Write 40 GB data in pod 4
+    Then Volume 4 backup 1 should be able to create
+    Then Delete pod 4 and volume 4
+    Then Create pod 5 from volume 4 200 GB volume backup 1
+    And Pod 5 data should same as volume 4 backup 1

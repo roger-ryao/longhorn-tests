@@ -64,6 +64,30 @@ class Base(ABC):
             logging(f"Getting volume {volume_name} last data checksum failed: {e}")
             return ""
 
+    def get_all_data_checksums(self, volume_name):
+        data_checksums = {}
+        i = 0
+        while True:
+            annotation_key = f"{self.ANNOT_DATA_CHECKSUM}{i}"
+            try:
+                checksum = get_annotation_value(
+                    group="longhorn.io",
+                    version="v1beta2",
+                    namespace="longhorn-system",
+                    plural="volumes",
+                    name=volume_name,
+                    annotation_key=annotation_key,
+                )
+                if not checksum:
+                    break
+                data_checksums[annotation_key] = checksum
+            except Exception as e:
+                logging(f"Getting volume {volume_name} data checksum for {annotation_key} failed: {e}")
+                break
+            i += 1
+        
+        return data_checksums
+
     @abstractmethod
     def attach(self, volume_name, node_name, disable_frontend):
         return NotImplemented

@@ -33,6 +33,9 @@ class backup_keywords:
     def get_restored_checksum(self, backup_name):
         return self.backup.get_restored_checksum(backup_name)
 
+    def get_all_data_checksums(self, backup_name):
+        return self.backup.get_all_data_checksums(backup_name)
+
     def cleanup_backups(self):
         if get_backupstore():
             self.backup.cleanup_system_backups()

@@ -52,6 +52,9 @@ class Backup(Base):
     def get_restored_checksum(self, backup_name):
         return self.backup.get_restored_checksum(backup_name)
 
+    def get_all_data_checksums(self, backup_name):
+        return self.backup.get_all_data_checksums(backup_name)
+
     def cleanup_backup_volumes(self):
         return self.backup.cleanup_backup_volumes()
 

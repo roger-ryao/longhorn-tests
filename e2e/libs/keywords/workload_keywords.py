@@ -83,9 +83,10 @@ class workload_keywords:
         checksum = write_pod_random_data(pod_name, size_in_mb, file_name)
 
         logging(f"Storing pod {pod_name} file {file_name} checksum = {checksum}")
-
         volume_name = get_volume_name_by_pod(pod_name)
+        self.volume.set_data_checksum(volume_name, file_name, checksum)
         self.volume.set_annotation(volume_name, ANNOT_CHECKSUM, checksum)
+        return checksum
 
     def get_workload_pod_data_checksum(self, workload_name, file_name):
         pod_name = get_workload_pod_names(workload_name)[0]

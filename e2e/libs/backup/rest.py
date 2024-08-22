@@ -41,6 +41,9 @@ class Rest(Base):
 
         self.set_backup_id(backup.name, backup_id)
         self.set_data_checksum(backup.name, self.volume.get_last_data_checksum(volume_name))
+        data_checksums = self.volume.get_all_data_checksums(volume_name)
+        for annotation_key, checksum in data_checksums.items():
+            self.set_data_checksum(backup.name, checksum, annotation_key)
 
         return backup
 
