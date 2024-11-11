@@ -338,11 +338,14 @@ class CRD(Base):
                 engines = self.engine.get_engines(volume_name)
                 completed = len(engines) == 1 and engines[0]['status']['lastRestoredBackup'] == backup_name
                 if completed:
+#                    logging(f"Volume {volume_name} restoration from backup {backup_name} completed.")
                     break
+#                else:
+#                    logging(f"Volume {volume_name} restoration not completed. Engines: {engines}")
             except Exception as e:
                 logging(f"Getting volume {volume_name} engines error: {e}")
             time.sleep(self.retry_interval)
-        assert completed
+        assert completed, f"Volume {volume_name} restoration from backup {backup_name} did not complete."
 
         updated = False
         for i in range(self.retry_count):
@@ -351,11 +354,40 @@ class CRD(Base):
                 volume = self.get(volume_name)
                 if volume['status']['lastBackup'] == backup_name:
                     updated = True
+                    logging(f"Volume {volume_name} lastBackup updated to {backup_name}.")
                     break
             except Exception as e:
                 logging(f"Getting volume {volume_name} error: {e}")
             time.sleep(self.retry_interval)
-        assert updated
+        assert updated, f"Volume {volume_name} lastBackup did not update to {backup_name}."
+
+    def wait_for_volume_restoration_start(self, volume_name, backup_name,
+                                          progress=50):
+        started = False
+        for i in range(self.retry_count):
+            logging(f"Waiting for volume {volume_name} restoration from backup {backup_name} to start ({i}) ...")
+            try:
+                engines = self.engine.get_engines(volume_name)
+                for engine in engines:
+                    for status in engine['status']['restoreStatus'].values():
+                        if status['state'] == "in_progress" and status['progress'] > progress:
+                            started = True
+                            logging(f"Volume {volume_name} restoration from backup {backup_name} started with progress {status    ['progress']}%.")
+                            logging(f"Restore status: {engine['status']['restoreStatus']}")
+                            break
+                    #  Sometime the restore time is pretty short
+                    #  and the test may not be able to catch the intermediate status.
+                    if engine['status']['lastRestoredBackup'] == backup_name:
+                        started = True
+                    if started:
+                        break
+                if started:
+                    break
+            except Exception as e:
+                logging(f"Getting volume {volume_name} engines error: {e}")
+            time.sleep(self.retry_interval)
+
+        assert started, f"Volume {volume_name} restoration from backup {backup_name} did not start."
 
     def wait_for_volume_expand_to_size(self, volume_name, expected_size):
         engine = None
