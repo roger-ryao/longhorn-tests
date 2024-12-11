@@ -1135,6 +1135,18 @@ greater than MAX_SUPPORT_BINDLE_NUMBER.</p>
 <dd>
 <div class="desc"></div>
 </dd>
+<dt id="tests.common.is_backupTarget_azurite"><code class="name flex">
+<span>def <span class="ident">is_backupTarget_azurite</span></span>(<span>s)</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+</dd>
+<dt id="tests.common.is_backupTarget_cifs"><code class="name flex">
+<span>def <span class="ident">is_backupTarget_cifs</span></span>(<span>s)</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+</dd>
 <dt id="tests.common.is_backupTarget_nfs"><code class="name flex">
 <span>def <span class="ident">is_backupTarget_nfs</span></span>(<span>s)</span>
 </code></dt>
@@ -1322,6 +1334,12 @@ provide a base set of Tags to work with in the tests.
 </dd>
 <dt id="tests.common.recurring_job_feature_supported"><code class="name flex">
 <span>def <span class="ident">recurring_job_feature_supported</span></span>(<span>client)</span>
+</code></dt>
+<dd>
+<div class="desc"></div>
+</dd>
+<dt id="tests.common.remount_volume_read_only"><code class="name flex">
+<span>def <span class="ident">remount_volume_read_only</span></span>(<span>client, core_api, volume_name)</span>
 </code></dt>
 <dd>
 <div class="desc"></div>
@@ -2633,6 +2651,8 @@ from the args and kwargs arguments, respectively.</p></div>
 <li><code><a title="tests.common.get_volume_name" href="#tests.common.get_volume_name">get_volume_name</a></code></li>
 <li><code><a title="tests.common.get_volume_recurring_jobs_and_groups" href="#tests.common.get_volume_recurring_jobs_and_groups">get_volume_recurring_jobs_and_groups</a></code></li>
 <li><code><a title="tests.common.get_volume_running_replica_cnt" href="#tests.common.get_volume_running_replica_cnt">get_volume_running_replica_cnt</a></code></li>
+<li><code><a title="tests.common.is_backupTarget_azurite" href="#tests.common.is_backupTarget_azurite">is_backupTarget_azurite</a></code></li>
+<li><code><a title="tests.common.is_backupTarget_cifs" href="#tests.common.is_backupTarget_cifs">is_backupTarget_cifs</a></code></li>
 <li><code><a title="tests.common.is_backupTarget_nfs" href="#tests.common.is_backupTarget_nfs">is_backupTarget_nfs</a></code></li>
 <li><code><a title="tests.common.is_backupTarget_s3" href="#tests.common.is_backupTarget_s3">is_backupTarget_s3</a></code></li>
 <li><code><a title="tests.common.is_k8s_node_gke_cos" href="#tests.common.is_k8s_node_gke_cos">is_k8s_node_gke_cos</a></code></li>
@@ -2663,6 +2683,7 @@ from the args and kwargs arguments, respectively.</p></div>
 <li><code><a title="tests.common.read_pod_block_volume_data" href="#tests.common.read_pod_block_volume_data">read_pod_block_volume_data</a></code></li>
 <li><code><a title="tests.common.read_volume_data" href="#tests.common.read_volume_data">read_volume_data</a></code></li>
 <li><code><a title="tests.common.recurring_job_feature_supported" href="#tests.common.recurring_job_feature_supported">recurring_job_feature_supported</a></code></li>
+<li><code><a title="tests.common.remount_volume_read_only" href="#tests.common.remount_volume_read_only">remount_volume_read_only</a></code></li>
 <li><code><a title="tests.common.reset_disks_for_all_nodes" href="#tests.common.reset_disks_for_all_nodes">reset_disks_for_all_nodes</a></code></li>
 <li><code><a title="tests.common.reset_engine_image" href="#tests.common.reset_engine_image">reset_engine_image</a></code></li>
 <li><code><a title="tests.common.reset_longhorn_node_zone" href="#tests.common.reset_longhorn_node_zone">reset_longhorn_node_zone</a></code></li>
