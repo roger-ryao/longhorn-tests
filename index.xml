@@ -381,6 +381,21 @@ csi-sanity -csi.endpoint /var/lib/kubelet/obsoleted-longhorn-plugins/driver.long
     </item>
     
     <item>
+      <title>Delete Backup Asynchronously</title>
+      <link>https://longhorn.github.io/longhorn-tests/manual/release-specific/v1.8.0/test-delete-backup-asynchronously/</link>
+      <pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate>
+      
+      <guid>https://longhorn.github.io/longhorn-tests/manual/release-specific/v1.8.0/test-delete-backup-asynchronously/</guid>
+      <description>Related issues  https://github.com/longhorn/longhorn/issues/8746  LEP  https://github.com/longhorn/longhorn/pull/9152  Test Normal Case (use nfs) Given Longhorn cluster with 3 worker nodes.
+And Create a volume and attach it.
+And Write large data to the volume.
+And Create the first backup from the volume.
+And Write small data to the volume.
+And Create a snapshot.
+Then Delete the first backup and create second backup from the snapshot at the same time.</description>
+    </item>
+    
+    <item>
       <title>Dependency setup for GKE cluster using Container-Optimized OS as base image</title>
       <link>https://longhorn.github.io/longhorn-tests/manual/release-specific/v1.7.0/test-gke-container-optimized-os-dependency-setup/</link>
       <pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate>
@@ -556,6 +571,20 @@ Scenarios: Case 1: Test volume operations when some of the engine image DaemonSe
 - apiGroups:
 - apiextensions.k8s.io resources:
 - customresourcedefinitions verbs: [&amp;quot;&amp;quot;]</description>
+    </item>
+    
+    <item>
+      <title>Multiple Backup Stores</title>
+      <link>https://longhorn.github.io/longhorn-tests/manual/release-specific/v1.8.0/test-multiple-backup-stores/</link>
+      <pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate>
+      
+      <guid>https://longhorn.github.io/longhorn-tests/manual/release-specific/v1.8.0/test-multiple-backup-stores/</guid>
+      <description>Related issues  https://github.com/longhorn/longhorn/issues/5411  LEP  https://github.com/longhorn/longhorn/pull/6630  Test Update Default Backup Target Given Longhorn cluster with 3 worker nodes installed with Helm.
+Verify The ConfigMap longhorn-default-backupstore is created.
+Then Update the setting defaultBackupStore.backupTarget in the file values.yaml.
+Verify The default backup target URL is updated as the value of the setting defaultBackupStore.backupTarget.
+Then Update the setting defaultBackupStore.backupTargetCredentialSecret in the file values.yaml.
+Verify The default backup target secret is updated as the value of the setting defaultBackupStore.</description>
     </item>
     
     <item>
