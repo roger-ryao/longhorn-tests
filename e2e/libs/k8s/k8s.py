@@ -80,6 +80,31 @@ def wait_all_pods_evicted(node_name):
 
     assert evicted, 'failed to evict pods'
 
+def get_node_status(node_name):
+    api = client.CoreV1Api()
+    node = api.read_node(node_name)
+    conditions = node.status.conditions
+    for condition in conditions:
+        if condition.type == "Ready" and condition.status == "True":
+            return True
+    return False
+
+def get_node_status_debug(node_name):
+    api = client.CoreV1Api()
+    try:
+        node = api.read_node(node_name)
+        conditions = node.status.conditions
+        for condition in conditions:
+            logging(f"Node {node_name} condition: {condition.type} = {condition.status}")
+            if condition.type == "Ready" and condition.status == "True":
+                logging(f"Node {node_name} is Ready")
+                return True
+        logging(f"Node {node_name} is not Ready")
+        return False
+    except ApiException as e:
+        logging(f"Exception when calling CoreV1Api->read_node: {e}")
+        return False
+
 def check_node_cordoned(node_name):
     api = client.CoreV1Api()
     node = api.read_node(node_name)
