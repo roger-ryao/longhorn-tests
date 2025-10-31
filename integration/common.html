@@ -4512,6 +4512,22 @@ greater than MAX_SUPPORT_BINDLE_NUMBER.</p>
 </details>
 <div class="desc"></div>
 </dd>
+<dt id="tests.common.is_json_object"><code class="name flex">
+<span>def <span class="ident">is_json_object</span></span>(<span>s)</span>
+</code></dt>
+<dd>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def is_json_object(s):
+    parsed = json.loads(s)
+    if isinstance(parsed, dict):
+        return parsed
+    raise ValueError(f&#34;input {s} is not a valid json object&#34;)</code></pre>
+</details>
+<div class="desc"></div>
+</dd>
 <dt id="tests.common.is_k8s_node_gke_cos"><code class="name flex">
 <span>def <span class="ident">is_k8s_node_gke_cos</span></span>(<span>core_api)</span>
 </code></dt>
@@ -6713,8 +6729,22 @@ def sts_name(request):
             print(e)
             time.sleep(RETRY_INTERVAL)
     value = &#34;&#34; if value is None else value
-    assert setting.value == value, \
-        f&#34;expect update setting {name} to be {value}, but it&#39;s {setting.value}&#34;</code></pre>
+
+    try:
+        updated_setting = is_json_object(setting.value)
+        try:
+            value = is_json_object(value)
+            assert updated_setting == value, \
+                f&#34;Failed to update setting {name} to {value}, \
+                    current value is {updated_setting}&#34;
+        except ValueError:
+            assert all(v == value for v in updated_setting.values()), \
+                f&#34;Failed to update setting {name} to {value}, \
+                    current value is {updated_setting}&#34;
+    except ValueError:
+        assert setting.value == value, \
+            f&#34;Failed to update setting {name} to {value}, \
+                current value is {setting.value}&#34;</code></pre>
 </details>
 <div class="desc"></div>
 </dd>
@@ -8816,6 +8846,32 @@ ref: <a href="https://github.com/longhorn/longhorn/issues/4814">https://github.c
 </details>
 <div class="desc"></div>
 </dd>
+<dt id="tests.common.wait_for_system_snapshot_count"><code class="name flex">
+<span>def <span class="ident">wait_for_system_snapshot_count</span></span>(<span>volume, number, retry_counts=120)</span>
+</code></dt>
+<dd>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def wait_for_system_snapshot_count(volume, number, retry_counts=120):
+    for _ in range(retry_counts):
+        count = 0
+        for snapshot in volume.snapshotList():
+            if not snapshot.usercreated and snapshot.name != VOLUME_HEAD_NAME:
+                count += 1
+
+        if count == number:
+            return
+        time.sleep(RETRY_SNAPSHOT_INTERVAL)
+
+    assert False, \
+        f&#34;failed to wait for system snapshot.\n&#34; \
+        f&#34;Expect count={number}\n&#34; \
+        f&#34;Got count={count}&#34;</code></pre>
+</details>
+<div class="desc"></div>
+</dd>
 <dt id="tests.common.wait_for_tainted_node_engine_image_undeployed"><code class="name flex">
 <span>def <span class="ident">wait_for_tainted_node_engine_image_undeployed</span></span>(<span>client, img_name, tainted_node)</span>
 </code></dt>
@@ -10259,6 +10315,7 @@ from the args and kwargs arguments, respectively.</p></div>
 <li><code><a title="tests.common.is_backupTarget_cifs" href="#tests.common.is_backupTarget_cifs">is_backupTarget_cifs</a></code></li>
 <li><code><a title="tests.common.is_backupTarget_nfs" href="#tests.common.is_backupTarget_nfs">is_backupTarget_nfs</a></code></li>
 <li><code><a title="tests.common.is_backupTarget_s3" href="#tests.common.is_backupTarget_s3">is_backupTarget_s3</a></code></li>
+<li><code><a title="tests.common.is_json_object" href="#tests.common.is_json_object">is_json_object</a></code></li>
 <li><code><a title="tests.common.is_k8s_node_gke_cos" href="#tests.common.is_k8s_node_gke_cos">is_k8s_node_gke_cos</a></code></li>
 <li><code><a title="tests.common.is_k8s_node_label" href="#tests.common.is_k8s_node_label">is_k8s_node_label</a></code></li>
 <li><code><a title="tests.common.is_replica_available" href="#tests.common.is_replica_available">is_replica_available</a></code></li>
@@ -10407,6 +10464,7 @@ from the args and kwargs arguments, respectively.</p></div>
 <li><code><a title="tests.common.wait_for_snapshot_purge" href="#tests.common.wait_for_snapshot_purge">wait_for_snapshot_purge</a></code></li>
 <li><code><a title="tests.common.wait_for_support_bundle_cleanup" href="#tests.common.wait_for_support_bundle_cleanup">wait_for_support_bundle_cleanup</a></code></li>
 <li><code><a title="tests.common.wait_for_support_bundle_state" href="#tests.common.wait_for_support_bundle_state">wait_for_support_bundle_state</a></code></li>
+<li><code><a title="tests.common.wait_for_system_snapshot_count" href="#tests.common.wait_for_system_snapshot_count">wait_for_system_snapshot_count</a></code></li>
 <li><code><a title="tests.common.wait_for_tainted_node_engine_image_undeployed" href="#tests.common.wait_for_tainted_node_engine_image_undeployed">wait_for_tainted_node_engine_image_undeployed</a></code></li>
 <li><code><a title="tests.common.wait_for_volume_attached" href="#tests.common.wait_for_volume_attached">wait_for_volume_attached</a></code></li>
 <li><code><a title="tests.common.wait_for_volume_clone_status" href="#tests.common.wait_for_volume_clone_status">wait_for_volume_clone_status</a></code></li>
