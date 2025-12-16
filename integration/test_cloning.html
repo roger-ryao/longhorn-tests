@@ -193,7 +193,7 @@ def test_cloning_basic(client, core_api, pvc, pod, clone_pvc, clone_pod, storage
     # Step-5
     clone_volume_name = get_volume_name(core_api, clone_pvc_name)
     wait_for_volume_clone_status(client, clone_volume_name, VOLUME_FIELD_STATE,
-                                 VOLUME_FIELD_CLONE_COMPLETED)
+                                 VOLUME_FIELD_CLONE_COPY_COMPLETED_AWAITING_HEALTHY) # NOQA
 
     # Step-6
     wait_for_volume_detached(client, clone_volume_name)
@@ -445,8 +445,7 @@ eventually becomes healthy.</li>
 <summary>
 <span>Expand source code</span>
 </summary>
-<pre><code class="python">@pytest.mark.v2_volume_test
-@pytest.mark.cloning  # NOQA
+<pre><code class="python">@pytest.mark.cloning  # NOQA
 def test_cloning_with_backing_image(client, core_api, pvc, pod, clone_pvc, clone_pod, storage_class):  # NOQA
     &#34;&#34;&#34;
     1. Deploy a storage class that has backing image parameter
@@ -516,7 +515,7 @@ def test_cloning_with_backing_image(client, core_api, pvc, pod, clone_pvc, clone
 
     clone_volume_name = get_volume_name(core_api, clone_pvc_name)
     wait_for_volume_clone_status(client, clone_volume_name, VOLUME_FIELD_STATE,
-                                 VOLUME_FIELD_CLONE_COMPLETED)
+                                 VOLUME_FIELD_CLONE_COPY_COMPLETED_AWAITING_HEALTHY) # NOQA
 
     wait_for_volume_detached(client, clone_volume_name)
 
@@ -648,7 +647,7 @@ def test_cloning_with_detached_source_volume(client, core_api, pvc, clone_pvc, s
     # Step-6
     clone_volume_name = get_volume_name(core_api, clone_pvc_name)
     wait_for_volume_clone_status(client, clone_volume_name, VOLUME_FIELD_STATE,
-                                 VOLUME_FIELD_CLONE_COMPLETED)
+                                 VOLUME_FIELD_CLONE_COPY_COMPLETED_AWAITING_HEALTHY) # NOQA
     wait_for_volume_detached(client, clone_volume_name)
 
     # Step-7
