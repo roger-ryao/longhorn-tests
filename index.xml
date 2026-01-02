@@ -490,13 +490,10 @@ INFO[2024-06-24T10:24:54+08:00] Retrieved preflight checker result: ip-10-0-2-10
       <pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate>
       
       <guid>https://longhorn.github.io/longhorn-tests/manual/rancher-integration/lh-hardend-rancher/</guid>
-      <description>Given Hardened Downstream (RKE2/RKE1/K3s) cluster in Rancher v2.6.x with CIS 1.6 as per Hardening guide
+      <description>Given Hardened Downstream (RKE2/K3s) cluster in Rancher v2.13.x with CIS 1.11 as per Hardening Guides and Benchmark Versions
 When Deploy Longhorn using Marketplace app
 Then Longhorn should be deployed properly
-AND Volume creation and other operations should work fine
-Given Hardened Downstream (RKE2/RKE1/K3s) cluster in Rancher v2.7.x with CIS 1.6 or 1.20 or 1.23 as per Hardending guide for Rancher 2.7
-When Deploy Longhorn using Marketplace app
-Then Longhorn should be deployed properly</description>
+AND Volume creation and other operations should work fine</description>
     </item>
     
     <item>
@@ -1326,6 +1323,17 @@ Test Steps Given A single-server K3s cluster
 sudo zypper in jq sqlite3 sudo snap install kubectl --classic And Longhorn v1.2.x installed
 And Create a RWX volume
 kubectl apply -f - &amp;lt;&amp;lt;EOF apiVersion: v1 kind: PersistentVolumeClaim metadata: name: longhorn-share spec: accessModes: - ReadWriteMany resources: requests: storage: 5Mi storageClassName: longhorn --- apiVersion: apps/v1 kind: Deployment metadata: name: hello-world labels: app: hello-world spec: replicas: 1 selector: matchLabels: app: hello-world template: metadata: labels: app: hello-world spec: containers: - name: hello-world image: busybox command: [&amp;#39;sh&amp;#39;, &amp;#39;-c&amp;#39;, &amp;#39;while true ; do now=$(date +%s) ; echo $now ; echo $now &amp;gt;&amp;gt;/mnt/data/share/log || echo $now &amp;gt;/mnt/data/share/log ; ls -l /mnt/data/share/log ; sleep 1 ; done&amp;#39;] volumeMounts: - mountPath: /mnt/data/share name: share volumes: - name: share persistentVolumeClaim: claimName: longhorn-share EOF And Create a backup target</description>
+    </item>
+    
+    <item>
+      <title>Test migration when there is engine or replica unavailable</title>
+      <link>https://longhorn.github.io/longhorn-tests/manual/release-specific/v1.11.0/test-migration-when-there-is-engine-or-replica-unavailable/</link>
+      <pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate>
+      
+      <guid>https://longhorn.github.io/longhorn-tests/manual/release-specific/v1.11.0/test-migration-when-there-is-engine-or-replica-unavailable/</guid>
+      <description>Related issue https://github.com/longhorn/longhorn/issues/11397
+Test Given Create a v1 Longhorn volume
+apiVersion: longhorn.io/v1beta2 kind: Volume metadata: labels: backup-target: default longhornvolume: vol recurring-job-group.longhorn.io/default: enabled setting.longhorn.io/remove-snapshots-during-filesystem-trim: ignored setting.longhorn.io/replica-auto-balance: ignored setting.longhorn.io/snapshot-data-integrity: ignored name: vol namespace: longhorn-system spec: accessMode: rwx backingImage: &amp;#34;&amp;#34; backupCompressionMethod: lz4 backupTargetName: default dataEngine: v1 dataLocality: disabled dataSource: &amp;#34;&amp;#34; disableFrontend: false diskSelector: [] encrypted: false freezeFilesystemForSnapshot: ignored fromBackup: &amp;#34;&amp;#34; frontend: blockdev image: longhornio/longhorn-engine:master-head lastAttachedBy: &amp;#34;&amp;#34; migratable: true migrationNodeID: &amp;#34;&amp;#34; nodeID: &amp;#34;&amp;#34; nodeSelector: [] numberOfReplicas: 3 replicaAutoBalance: ignored replicaDiskSoftAntiAffinity: ignored replicaSoftAntiAffinity: ignored replicaZoneSoftAntiAffinity: ignored restoreVolumeRecurringJob: ignored revisionCounterDisabled: false size: &amp;#34;5368709120&amp;#34; snapshotDataIntegrity: ignored snapshotMaxCount: 250 snapshotMaxSize: &amp;#34;0&amp;#34; staleReplicaTimeout: 2880 unmapMarkSnapChainRemoved: ignored And Attach the volume to a node with &amp;lt;Original Node ID&amp;gt;</description>
     </item>
     
     <item>
