@@ -115,6 +115,9 @@ pip install -r requirements.txt
 # to run all the test cases, simply execute:
 ./run.sh
 
+# to run all the test cases in test_basic.robot for v2 data engine, simply execute:
+./run.sh -v DATA_ENGINE:v2 tests/regression/test_basic.robot
+
 # to specify the test case you'd like to run, use "-t" option:
 ./run.sh -t "Reboot Volume Node While Workload Heavy Writing"
 
