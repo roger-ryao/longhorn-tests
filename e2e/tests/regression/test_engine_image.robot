@@ -58,9 +58,9 @@ Test Replicas Not Accumulate During Engine Upgrade
     ...       waiting for their replica count to be 3
     [Tags]    coretest    upgrade    network
 
-    IF    '${DATA_ENGINE}' == 'v2'
-        Skip    v2 data engine does not support engine image upgrade
-    END
+#    IF    '${DATA_ENGINE}' == 'v2'
+#        Skip    v2 data engine does not support engine image upgrade
+#    END
 
     ${LONGHORN_STABLE_VERSION}=    Get Environment Variable    LONGHORN_STABLE_VERSION    default=''
     IF    '${LONGHORN_STABLE_VERSION}' != ''
@@ -75,7 +75,7 @@ Test Replicas Not Accumulate During Engine Upgrade
     And Install Longhorn stable version
 
     FOR    ${i}    IN RANGE    10
-        And Create volume ${i} with    dataEngine=v1
+        And Create volume ${i} with    dataEngine=v2
         # staleReplicaTimeout needs to be set to a small value to make the failed replica quickly marked as stale after engine upgrade,
         # for dynamic provisioning by storageclass longhorn or longhorn-static, it's set to 30 (minutes)
         # for UI-created volume, Longhorn forontend automatically sets it to 20 (minutes)

@@ -174,33 +174,78 @@ Pre-release Checks
     # based on what upgrade path we're testing
     IF    "${DATA_ENGINE}" == "v2"
 
-        # (1) create a v2 volume that is never attached before upgrade
+        # (v2-1) create a v2 volume that is never attached before upgrade
         When Create volume v2-vol-never-attach with    size=1Gi    dataEngine=v2
 
-        # (2) create a v2 volume with data
+        # (v2-2) create a v2 volume with data
         And Create volume v2 with    size=1Gi    dataEngine=v2
         And Attach volume v2
         And Wait for volume v2 healthy
         And Write data 0 256 MB to volume v2
 
-        # (3) create a v2 volume used by a deployment
+        # (v2-3) create a v2 volume used by a deployment
         When Create storageclass longhorn-test-v2 with    dataEngine=v2
         And Create persistentvolumeclaim pvc-v2    volume_type=RWO    sc_name=longhorn-test-v2
         And Create deployment deploy-v2-upgrade with persistentvolumeclaim pvc-v2
         And Wait for volume of deployment deploy-v2-upgrade attached and healthy
         And Write 1024 MB data to file data.txt in deployment deploy-v2-upgrade
 
-        # (5) create v2 snapshot
+        # (v2-4) create a v2 volume used by a statefulset
+        And Create statefulset v2-ss-upgrade using RWO volume with longhorn-test-v2 storageclass
+        And Wait for volume of statefulset v2-ss-upgrade healthy
+        And Write 1024 MB data to file data.txt in statefulset v2-ss-upgrade
+
+        # (v2-5) create a v2 strict-local volume
+        When Create volume v2-vol-strict-local with    size=1Gi    dataEngine=v2
+        And Attach volume v2-vol-strict-local
+        And Wait for volume v2-vol-strict-local healthy
+        And Write data data-v2-vol-strict-local 256 MB to volume v2-vol-strict-local
+
+        # (v2-6) create a v2 rwx workload
+        When Create persistentvolumeclaim v2-pvc-rwx    volume_type=RWX    sc_name=longhorn-test-v2
+        And Create deployment v2-deploy-rwx with persistentvolumeclaim v2-pvc-rwx
+        And Wait for volume of deployment v2-deploy-rwx attached and healthy
+        And Write 1024 MB data to file data.txt in deployment v2-deploy-rwx
+
+        # (v2-7) create a v2 volume to be detached
+        When Create volume v2-vol-detach with    size=1Gi    dataEngine=v2
+        And Attach volume v2-vol-detach
+        And Wait for volume v2-vol-detach healthy
+        And Write data data-v2-vol-detach 256 MB to volume v2-vol-detach
+        And Detach volume v2-vol-detach
+        And Wait for volume v2-vol-detach detached
+
+        # (v2-8) create a v2 volume for replica rebuilding after upgrade
+        When Create volume v2-vol-rebuild with    dataEngine=v2
+        And Attach volume v2-vol-rebuild
+        And Wait for volume v2-vol-rebuild healthy
+        And Write data data-v2-vol-rebuild to volume v2-vol-rebuild
+
+        # (v2-9) create a v2 volume with recurring jobs
+        When Create volume v2-vol-recurring with    size=1Gi    dataEngine=v2
+        And Attach volume v2-vol-recurring
+        And Wait for volume v2-vol-recurring healthy
+        Then Create snapshot and backup recurringjob for volume v2-vol-recurring
+        And Check recurringjobs for volume v2-vol-recurring work
+
+        # (v2-10) create v2 snapshot
         And Create snapshot snapshot-v2 of volume v2
         And Write data 1 256 MB to volume v2
 
-        # (6) create v2 backup
+        # (v2-11) create v2 backup
         And Create backup backup-v2 for volume v2
 
         # upgrading Longhorn with attached v2 volumes is not allowed
         And Detach volume v2
         And Wait for volume v2 detached
+        And Detach volume v2-vol-strict-local
+        And Wait for volume v2-vol-strict-local detached
+        And Detach volume v2-vol-rebuild
+        And Wait for volume v2-vol-rebuild detached
+        And Detach volume v2-vol-recurring
+        And Wait for volume v2-vol-recurring detached
         And Scale down deployment deploy-v2-upgrade to detach volume
+        And Scale down deployment v2-deploy-rwx to detach volume
 
     END
 
@@ -365,25 +410,59 @@ Pre-release Checks
 
     IF    "${DATA_ENGINE}" == "v2"
 
-        # (1) check a volume that is never attached can be attached after upgrade
+        # (v2-1) check a volume that is never attached can be attached after upgrade
         When Attach volume v2-vol-never-attach
         Then Wait for volume v2-vol-never-attach attached
         And Wait for volume v2-vol-never-attach healthy
         And Check volume v2-vol-never-attach works
 
-        # (2) check the data integrity of a volume with data
+        # (v2-2) check the data integrity of a volume with data
         When Attach volume v2
         Then Wait for volume v2 attached
         And Wait for volume v2 healthy
         And Check volume v2 data is intact
         And Check volume v2 works
 
-        # (3) check the data integrity of the volume used by a deployment
+        # (v2-3) check the data integrity of the volume used by a deployment
         When Scale up deployment deploy-v2-upgrade to attach volume
         And Check deployment deploy-v2-upgrade data in file data.txt is intact
         And Check deployment deploy-v2-upgrade works
 
-        # (5) revert v2 snapshot
+        # (v2-4) check statefulset pod didn't restart and the data integrity of the volume used by a statefulset
+        And Check statefulset v2-ss-upgrade pods did not restart
+        And Check statefulset v2-ss-upgrade data in file data.txt is intact
+        And Check statefulset v2-ss-upgrade works
+
+        # (v2-5) check the data integrity of the v2 strict-local volume
+        And Attach volume v2-vol-strict-local
+        And Wait for volume v2-vol-strict-local healthy
+        And Check volume v2-vol-strict-local data is intact
+        And Check volume v2-vol-strict-local works
+
+        # (v2-6) check deployment pod didn't restart and the data integrity of the v2 rwx workload
+        And Scale up deployment v2-deploy-rwx to attach volume
+        And Check deployment v2-deploy-rwx pods did not restart
+        And Check deployment v2-deploy-rwx data in file data.txt is intact
+        And Check deployment v2-deploy-rwx works
+
+        # (v2-7) check the v2 detached volume can be attached after upgrade
+        When Attach volume v2-vol-detach
+        Then Wait for volume v2-vol-detach healthy
+        And Check volume v2-vol-detach data is intact
+        And Check volume v2-vol-detach works
+
+        # (v2-8) trigger v2 replica rebuilding after upgrade
+        When Delete volume v2-vol-rebuild replica on node 1
+        Then Wait until volume v2-vol-rebuild replica rebuilding started on node 1
+        And Wait until volume v2-vol-rebuild replica rebuilding completed on node 1
+        And Wait for volume v2-vol-rebuild healthy
+        And Check volume v2-vol-rebuild data is intact
+
+        # (v2-9) check recurring jobs are working after v2 upgrade
+        And Check recurringjobs for volume v2-vol-recurring work
+
+        # (v2-10) revert v2 snapshot
+        And Check volume v2 data is data 1
         When Detach volume v2
         And Wait for volume v2 detached
         And Attach volume v2 in maintenance mode
@@ -395,19 +474,20 @@ Pre-release Checks
         And Wait for volume v2 healthy
         And Check volume v2 data is data 0
 
-        # (6) restore v2 volume from backup
+        # (v2-11) restore v2 volume from backup
         When Create volume vol-restore-v2 from backup backup-v2 of volume v2    size=1Gi    dataEngine=v2
         Then Wait for volume vol-restore-v2 restoration from backup backup-v2 of volume v2 start
         And Wait for volume vol-restore-v2 detached
         And Attach volume vol-restore-v2
         And Check volume vol-restore-v2 data is backup backup-v2 of volume v2
 
-        # (7) trigger v2 replica rebuilding after upgrade
-        When Delete volume v2 replica on node 1
-        Then Wait until volume v2 replica rebuilding started on node 1
-        And Wait until volume v2 replica rebuilding completed on node 1
-        And Wait for volume v2 healthy
-        And Check volume v2 data is data 0
+        # (v2-12) check a v2 volume can be detached and re-attached
+        When Detach volume v2-vol-rebuild
+        And Wait for volume v2-vol-rebuild detached
+        Then Attach volume v2-vol-rebuild
+        And Wait for volume v2-vol-rebuild healthy
+        And Check volume v2-vol-rebuild data is intact
+
     END
 
     # test uninstalling Longhorn
