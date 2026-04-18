@@ -15,9 +15,48 @@ Resource    ../keywords/backupstore.resource
 Resource    ../keywords/sharemanager.resource
 Resource    ../keywords/storageclass.resource
 Resource    ../keywords/workload.resource
+Resource    ../keywords/engine_image.resource
 
 Test Setup    Set up test environment
 Test Teardown    Cleanup test resources
+
+*** Keywords ***
+Restore engine image liveness probe default settings
+    # TODO: move to setting.resource
+    Setting engine-image-pod-liveness-probe-timeout is set to 4
+    Setting engine-image-pod-liveness-probe-period is set to 5
+    Setting engine-image-pod-liveness-probe-failure-threshold is set to 3
+    Wait for engine image DaemonSet rollout to complete
+    Cleanup test resources
+
+Wait for engine image DaemonSet rollout to complete
+    # TODO: move to engine_image.resource
+    Run command and wait for output
+    ...    kubectl -n longhorn-system rollout status ds -l longhorn.io/component=engine-image --timeout=180s
+    ...    successfully rolled out
+
+Multiple engine image DaemonSets exist
+    # TODO: move to engine_image.resource
+    ${result}=    Run Command And Get Output
+    ...    kubectl -n longhorn-system get ds -l longhorn.io/component=engine-image --no-headers | wc -l
+    Should Be True    ${result} > 1    msg=Expected more than one engine-image DaemonSet but found ${result}
+
+All engine image DaemonSets have liveness probe timeout ${timeout} period ${period} failure threshold ${failure_threshold}
+    # TODO: move to engine_image.resource
+    ${count}=    Run Command And Get Output
+    ...    kubectl -n longhorn-system get ds -l longhorn.io/component=engine-image --no-headers | wc -l
+    ${count}=    Convert To Integer    ${count}
+    FOR    ${index}    IN RANGE    ${count}
+        Run command and wait for output
+        ...    kubectl -n longhorn-system get ds -l longhorn.io/component=engine-image -o jsonpath='{.items[${index}].spec.template.spec.containers[0].livenessProbe.timeoutSeconds}'
+        ...    ${timeout}
+        Run command and wait for output
+        ...    kubectl -n longhorn-system get ds -l longhorn.io/component=engine-image -o jsonpath='{.items[${index}].spec.template.spec.containers[0].livenessProbe.periodSeconds}'
+        ...    ${period}
+        Run command and wait for output
+        ...    kubectl -n longhorn-system get ds -l longhorn.io/component=engine-image -o jsonpath='{.items[${index}].spec.template.spec.containers[0].livenessProbe.failureThreshold}'
+        ...    ${failure_threshold}
+    END
 
 *** Test Cases ***
 Test Setting Update With Valid Value
@@ -210,3 +249,172 @@ Test Default Settings Quoting
     Then Wait for longhorn ready
     And Setting default-replica-count should be {"v1":"4","v2":"2"}
     And Setting deleting-confirmation-flag should be true
+
+Test Engine Image Liveness Probe Default Values
+    [Tags]    setting    engine-image
+    [Documentation]    Verify engine-image liveness probe settings exist with correct default values.
+    ...                Issue: https://github.com/longhorn/longhorn/issues/12846
+    When Setting engine-image-pod-liveness-probe-timeout should be 4
+    And Setting engine-image-pod-liveness-probe-period should be 5
+    And Setting engine-image-pod-liveness-probe-failure-threshold should be 3
+    Then Run command and expect output
+    ...    kubectl -n longhorn-system get ds -l longhorn.io/component=engine-image -o jsonpath='{.items[0].spec.template.spec.containers[0].livenessProbe.timeoutSeconds}'
+    ...    4
+    And Run command and expect output
+    ...    kubectl -n longhorn-system get ds -l longhorn.io/component=engine-image -o jsonpath='{.items[0].spec.template.spec.containers[0].livenessProbe.periodSeconds}'
+    ...    5
+    And Run command and expect output
+    ...    kubectl -n longhorn-system get ds -l longhorn.io/component=engine-image -o jsonpath='{.items[0].spec.template.spec.containers[0].livenessProbe.failureThreshold}'
+    ...    3
+
+Test Engine Image Liveness Probe DaemonSet Auto Update
+    [Tags]    setting    engine-image
+    [Documentation]    Verify DaemonSet liveness probe values are updated after patching settings.
+    ...                Issue: https://github.com/longhorn/longhorn/issues/12846
+    When Setting engine-image-pod-liveness-probe-timeout is set to 15
+    And Setting engine-image-pod-liveness-probe-period is set to 30
+    And Setting engine-image-pod-liveness-probe-failure-threshold is set to 10
+    And Wait for engine image DaemonSet rollout to complete
+    Then Run command and expect output
+    ...    kubectl -n longhorn-system get ds -l longhorn.io/component=engine-image -o jsonpath='{.items[0].spec.template.spec.containers[0].livenessProbe.timeoutSeconds}'
+    ...    15
+    And Run command and expect output
+    ...    kubectl -n longhorn-system get ds -l longhorn.io/component=engine-image -o jsonpath='{.items[0].spec.template.spec.containers[0].livenessProbe.periodSeconds}'
+    ...    30
+    And Run command and expect output
+    ...    kubectl -n longhorn-system get ds -l longhorn.io/component=engine-image -o jsonpath='{.items[0].spec.template.spec.containers[0].livenessProbe.failureThreshold}'
+    ...    10
+    And Run command and expect output
+    ...    kubectl -n longhorn-system get pod -l longhorn.io/component=engine-image -o jsonpath='{range .items[*]}{.status.containerStatuses[0].restartCount}{"\n"}{end}'
+    ...    0
+    [Teardown]    Restore engine image liveness probe default settings
+
+Test Engine Image Liveness Probe Invalid Value Rejection
+    [Tags]    setting    engine-image
+    [Documentation]    Verify that invalid values for liveness probe settings are rejected.
+    ...                Issue: https://github.com/longhorn/longhorn/issues/12846
+    When Set setting engine-image-pod-liveness-probe-period to -1 will fail
+    And Set setting engine-image-pod-liveness-probe-timeout to 0 will fail
+    And Set setting engine-image-pod-liveness-probe-failure-threshold to abc will fail
+    Then Run command and expect output
+    ...    kubectl -n longhorn-system get ds -l longhorn.io/component=engine-image -o jsonpath='{.items[0].spec.template.spec.containers[0].livenessProbe.timeoutSeconds}'
+    ...    4
+    And Run command and expect output
+    ...    kubectl -n longhorn-system get ds -l longhorn.io/component=engine-image -o jsonpath='{.items[0].spec.template.spec.containers[0].livenessProbe.periodSeconds}'
+    ...    5
+    And Run command and expect output
+    ...    kubectl -n longhorn-system get ds -l longhorn.io/component=engine-image -o jsonpath='{.items[0].spec.template.spec.containers[0].livenessProbe.failureThreshold}'
+    ...    3
+
+Test Engine Image Liveness Probe Multiple Engine Images
+    [Tags]    setting    engine-image
+    [Documentation]    Verify all engine-image DaemonSets are updated consistently when probe settings change.
+    ...                Issue: https://github.com/longhorn/longhorn/issues/12846
+    Given Create compatible engine image
+    When Setting engine-image-pod-liveness-probe-timeout is set to 15
+    And Setting engine-image-pod-liveness-probe-period is set to 30
+    And Setting engine-image-pod-liveness-probe-failure-threshold is set to 10
+    And Wait for engine image DaemonSet rollout to complete
+    Then All engine image DaemonSets have liveness probe timeout 15 period 30 failure threshold 10
+    [Teardown]    Restore engine image liveness probe default settings
+
+Test Engine Image Liveness Probe Install With Custom Values
+    [Tags]    setting    engine-image    uninstall
+    [Documentation]    - Verify that engine-image liveness probe settings can be configured
+    ...                  via Helm chart defaultSettings or manifest default-setting.yaml at install time.
+    ...                - Issue: https://github.com/longhorn/longhorn/issues/12846
+    ...                - Test steps:
+    ...                - 1. Uninstall Longhorn and verify all CRDs removed.
+    ...                - 2. Install Longhorn with custom probe values (timeout=15, period=30, failureThreshold=10).
+    ...                  For helm: set via defaultSettings.engineImagePodLivenessProbeTimeout/Period/FailureThreshold.
+    ...                  For manifest: append to default-setting.yaml in longhorn.yaml ConfigMap.
+    ...                - 3. Wait for Longhorn ready.
+    ...                - 4. Assert setting values = 15, 30, 10.
+    ...                - 5. Assert DaemonSet liveness probe values = 15, 30, 10.
+
+    Given Setting deleting-confirmation-flag is set to true
+    And Uninstall Longhorn
+    And Check all Longhorn CRD removed
+
+    ${LONGHORN_INSTALL_METHOD} =    Get Environment Variable    LONGHORN_INSTALL_METHOD    default=manifest
+    IF    '${LONGHORN_INSTALL_METHOD}' == 'helm'
+        ${patch} =    Set Variable
+        ...    .defaultSettings.engineImagePodLivenessProbeTimeout = 15 | .defaultSettings.engineImagePodLivenessProbePeriod = 30 | .defaultSettings.engineImagePodLivenessProbeFailureThreshold = 10
+        ${helm_cmd} =    Set Variable    yq eval '${patch}' ${LONGHORN_REPO_DIR}/chart/values.yaml > values.yaml
+        Install Longhorn    custom_cmd=${helm_cmd}
+    ELSE
+        ${manifest_cmd} =    Set Variable
+        ...    sed -i "/default-setting\\.yaml: |-/a\\${SPACE * 4}engine-image-pod-liveness-probe-failure-threshold: 10" longhorn.yaml && sed -i "/default-setting\\.yaml: |-/a\\${SPACE * 4}engine-image-pod-liveness-probe-period: 30" longhorn.yaml && sed -i "/default-setting\\.yaml: |-/a\\${SPACE * 4}engine-image-pod-liveness-probe-timeout: 15" longhorn.yaml
+        Install Longhorn    custom_cmd=${manifest_cmd}
+    END
+
+    Then Wait for longhorn ready
+    And Setting engine-image-pod-liveness-probe-timeout should be 15
+    And Setting engine-image-pod-liveness-probe-period should be 30
+    And Setting engine-image-pod-liveness-probe-failure-threshold should be 10
+    And Run command and expect output
+    ...    kubectl -n longhorn-system get ds -l longhorn.io/component=engine-image -o json | jq '.items[0].spec.template.spec.containers[0].livenessProbe.timeoutSeconds'
+    ...    15
+    And Run command and expect output
+    ...    kubectl -n longhorn-system get ds -l longhorn.io/component=engine-image -o json | jq '.items[0].spec.template.spec.containers[0].livenessProbe.periodSeconds'
+    ...    30
+    And Run command and expect output
+    ...    kubectl -n longhorn-system get ds -l longhorn.io/component=engine-image -o json | jq '.items[0].spec.template.spec.containers[0].livenessProbe.failureThreshold'
+    ...    10
+    [Teardown]    Restore engine image liveness probe default settings
+
+Test Engine Image Liveness Probe Upgrade With Custom Values
+    [Tags]    setting    engine-image    uninstall
+    [Documentation]    - Verify that engine-image liveness probe settings can be configured
+    ...                  via Helm chart defaultSettings or manifest default-setting.yaml at upgrade time.
+    ...                - Issue: https://github.com/longhorn/longhorn/issues/12846
+    ...                - Test steps:
+    ...                - 1. Uninstall Longhorn and install stable version (without liveness probe settings).
+    ...                - 2. Upgrade Longhorn with custom probe values (timeout=15, period=30, failureThreshold=10).
+    ...                  For helm: set via defaultSettings.engineImagePodLivenessProbeTimeout/Period/FailureThreshold.
+    ...                  For manifest: append to default-setting.yaml in longhorn.yaml ConfigMap.
+    ...                - 3. Wait for Longhorn ready.
+    ...                - 4. Assert setting values = 15, 30, 10.
+    ...                - 5. Assert DaemonSet liveness probe values = 15, 30, 10.
+
+    ${LONGHORN_STABLE_VERSION}=    Get Environment Variable    LONGHORN_STABLE_VERSION    default=''
+    IF    '${LONGHORN_STABLE_VERSION}' == ''
+        Skip    LONGHORN_STABLE_VERSION not set - required for upgrade test
+    END
+
+    # Precondition: Set up environment and install Longhorn
+    Given Setting deleting-confirmation-flag is set to true
+    And Uninstall Longhorn
+    And Check Longhorn CRD removed
+
+    When Install Longhorn stable version
+    And Set default backupstore
+    And Enable v2 data engine and add block disks
+
+    ${LONGHORN_INSTALL_METHOD} =    Get Environment Variable    LONGHORN_INSTALL_METHOD    default=manifest
+    IF    '${LONGHORN_INSTALL_METHOD}' == 'helm'
+        ${patch} =    Set Variable
+        ...    .defaultSettings.engineImagePodLivenessProbeTimeout = 15 | .defaultSettings.engineImagePodLivenessProbePeriod = 30 | .defaultSettings.engineImagePodLivenessProbeFailureThreshold = 10
+        ${helm_cmd} =    Set Variable    yq eval '${patch}' ${LONGHORN_REPO_DIR}/chart/values.yaml > values.yaml
+        Upgrade Longhorn to custom version    custom_cmd=${helm_cmd}
+    ELSE
+        ${manifest_cmd} =    Set Variable
+        ...    sed -i "/default-setting\\.yaml: |-/a\\${SPACE * 4}engine-image-pod-liveness-probe-failure-threshold: 10" longhorn.yaml && sed -i "/default-setting\\.yaml: |-/a\\${SPACE * 4}engine-image-pod-liveness-probe-period: 30" longhorn.yaml && sed -i "/default-setting\\.yaml: |-/a\\${SPACE * 4}engine-image-pod-liveness-probe-timeout: 15" longhorn.yaml
+        Upgrade Longhorn to custom version    custom_cmd=${manifest_cmd}
+    END
+
+    Then Wait for longhorn ready
+    And Setting engine-image-pod-liveness-probe-timeout should be 15
+    And Setting engine-image-pod-liveness-probe-period should be 30
+    And Setting engine-image-pod-liveness-probe-failure-threshold should be 10
+    And Run command and expect output
+    ...    kubectl -n longhorn-system get ds -l longhorn.io/component=engine-image -o json | jq '.items[0].spec.template.spec.containers[0].livenessProbe.timeoutSeconds'
+    ...    15
+    And Run command and expect output
+    ...    kubectl -n longhorn-system get ds -l longhorn.io/component=engine-image -o json | jq '.items[0].spec.template.spec.containers[0].livenessProbe.periodSeconds'
+    ...    30
+    And Run command and expect output
+    ...    kubectl -n longhorn-system get ds -l longhorn.io/component=engine-image -o json | jq '.items[0].spec.template.spec.containers[0].livenessProbe.failureThreshold'
+    ...    10
+    [Teardown]    Restore engine image liveness probe default settings
+
