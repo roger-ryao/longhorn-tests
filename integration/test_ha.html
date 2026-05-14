@@ -271,7 +271,7 @@ el.replaceWith(d);
     volume = common.wait_for_volume_faulted(client, volume_name)
 
     if DATA_ENGINE == &#34;v2&#34;:
-        wait_for_all_nodes_disks_schedulable(client)
+        wait_for_all_nodes_disks_schedulable(client, disk_type=&#34;block&#34;)
     volume.salvage(names=[replica0_name, replica1_name])
     volume = client.by_id_volume(volume_name)
 
@@ -2681,7 +2681,8 @@ def test_ha_simple_recovery(client, volume_name):  # NOQA
 <summary>
 <span>Expand source code</span>
 </summary>
-<pre><code class="python">def test_inc_restoration_with_multiple_rebuild_and_expansion(set_random_backupstore, client, core_api, volume_name, storage_class, csi_pv, pvc, pod_make): # NOQA
+<pre><code class="python">@pytest.mark.v2_volume_test  # NOQA
+def test_inc_restoration_with_multiple_rebuild_and_expansion(set_random_backupstore, client, core_api, volume_name, storage_class, csi_pv, pvc, pod_make): # NOQA
     &#34;&#34;&#34;
     [HA] Test if the rebuild is disabled for the DR volume
     1. Setup a random backupstore.
@@ -2699,8 +2700,7 @@ def test_ha_simple_recovery(client, volume_name):  # NOQA
     11. For the DR volume, delete one replica and trigger incremental restore
         simultaneously.
     12. Wait for the inc restoration complete and the volume becoming Healthy.
-    13. Check the DR volume size and snapshot info. Make sure there is only
-        one snapshot in the volume.
+    13. Check the DR volume size and snapshot info.
     14. Online expand the std volume and wait for expansion complete.
     15. Write data to the std volume then create the 3rd backup.
     16. Trigger the inc restore then re-verify the snapshot info.
@@ -2818,13 +2818,16 @@ def test_ha_simple_recovery(client, volume_name):  # NOQA
     # Verify the snapshot info
     dr_volume = client.by_id_volume(dr_volume_name)
     assert dr_volume.size == str(expand_size1)
-    wait_for_snapshot_count(dr_volume, 2, count_removed=True)
-    snapshots = dr_volume.snapshotList(volume=dr_volume_name)
-    for snap in snapshots:
-        if snap[&#34;name&#34;] != &#34;volume-head&#34;:
-            assert snap[&#34;name&#34;] == &#34;expand-&#34; + str(expand_size1)
-            assert not snap[&#34;usercreated&#34;]
-            assert &#34;volume-head&#34; in snap[&#34;children&#34;]
+    if DATA_ENGINE == &#34;v1&#34;:
+        wait_for_snapshot_count(dr_volume, 2, count_removed=True)
+        snapshots = dr_volume.snapshotList(volume=dr_volume_name)
+        for snap in snapshots:
+            if snap[&#34;name&#34;] != &#34;volume-head&#34;:
+                assert snap[&#34;name&#34;] == &#34;expand-&#34; + str(expand_size1)
+                assert not snap[&#34;usercreated&#34;]
+                assert &#34;volume-head&#34; in snap[&#34;children&#34;]
+    else:
+        verify_v2_restored_snapshot_info(dr_volume, dr_volume_name)
 
     # Step 14: Do online expansion for the std volume.
     expand_size2 = 3 * Gi
@@ -2853,13 +2856,16 @@ def test_ha_simple_recovery(client, volume_name):  # NOQA
     # Then re-verify the snapshot info
     dr_volume = client.by_id_volume(dr_volume_name)
     assert dr_volume.size == str(expand_size2)
-    wait_for_snapshot_count(dr_volume, 2, count_removed=True)
-    snapshots = dr_volume.snapshotList(volume=dr_volume_name)
-    for snap in snapshots:
-        if snap[&#34;name&#34;] != &#34;volume-head&#34;:
-            assert snap[&#34;name&#34;] == &#34;expand-&#34; + str(expand_size2)
-            assert not snap[&#34;usercreated&#34;]
-            assert &#34;volume-head&#34; in snap[&#34;children&#34;]
+    if DATA_ENGINE == &#34;v1&#34;:
+        wait_for_snapshot_count(dr_volume, 2, count_removed=True)
+        snapshots = dr_volume.snapshotList(volume=dr_volume_name)
+        for snap in snapshots:
+            if snap[&#34;name&#34;] != &#34;volume-head&#34;:
+                assert snap[&#34;name&#34;] == &#34;expand-&#34; + str(expand_size2)
+                assert not snap[&#34;usercreated&#34;]
+                assert &#34;volume-head&#34; in snap[&#34;children&#34;]
+    else:
+        verify_v2_restored_snapshot_info(dr_volume, dr_volume_name)
 
     activate_standby_volume(client, dr_volume_name)
     wait_for_volume_detached(client, dr_volume_name)
@@ -2913,8 +2919,7 @@ expanded part.
 11. For the DR volume, delete one replica and trigger incremental restore
 simultaneously.
 12. Wait for the inc restoration complete and the volume becoming Healthy.
-13. Check the DR volume size and snapshot info. Make sure there is only
-one snapshot in the volume.
+13. Check the DR volume size and snapshot info.
 14. Online expand the std volume and wait for expansion complete.
 15. Write data to the std volume then create the 3rd backup.
 16. Trigger the inc restore then re-verify the snapshot info.
@@ -4545,6 +4550,43 @@ to crash the engine process</p>
 <li>Check new data written to the volume is successful.</li>
 </ol></div>
 </dd>
+<dt id="tests.test_ha.verify_v2_restored_snapshot_info"><code class="name flex">
+<span>def <span class="ident">verify_v2_restored_snapshot_info</span></span>(<span>volume, vol_name)</span>
+</code></dt>
+<dd>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def verify_v2_restored_snapshot_info(volume, vol_name):
+    # For V2, restore completion leaves the latest restore snapshot as the
+    # only non-system snapshot and volume-head points to it. Rebuild may
+    # create temporary system snapshots, so wait for them to be purged.
+    wait_for_system_snapshot_count(volume, 0)
+    wait_for_snapshot_count(volume, 2, count_removed=True)
+    snapshots = volume.snapshotList(volume=vol_name)
+    assert len(snapshots.data) == 2
+
+    snapshot_map = {snap[&#34;name&#34;]: snap for snap in snapshots.data}
+    assert &#34;volume-head&#34; in snapshot_map
+
+    restore_snapshot_names = [
+        name for name in snapshot_map if name != &#34;volume-head&#34;
+    ]
+    assert len(restore_snapshot_names) == 1
+
+    restore_snapshot_name = restore_snapshot_names[0]
+    restore_snapshot = snapshot_map[restore_snapshot_name]
+    volume_head = snapshot_map[&#34;volume-head&#34;]
+
+    assert restore_snapshot_name.startswith(&#34;restore-&#34;)
+    assert restore_snapshot[&#34;usercreated&#34;]
+    assert restore_snapshot[&#34;parent&#34;] == &#34;&#34;
+    assert &#34;volume-head&#34; in restore_snapshot[&#34;children&#34;]
+    assert volume_head[&#34;parent&#34;] == restore_snapshot_name</code></pre>
+</details>
+<div class="desc"></div>
+</dd>
 <dt id="tests.test_ha.wait_pod_for_remount_request"><code class="name flex">
 <span>def <span class="ident">wait_pod_for_remount_request</span></span>(<span>client, core_api, volume_name, pod_name, original_md5sum, data_path='/data/test')</span>
 </code></dt>
@@ -4642,6 +4684,7 @@ to crash the engine process</p>
 <li><code><a title="tests.test_ha.test_single_replica_restore_failure" href="#tests.test_ha.test_single_replica_restore_failure">test_single_replica_restore_failure</a></code></li>
 <li><code><a title="tests.test_ha.test_single_replica_unschedulable_restore_failure" href="#tests.test_ha.test_single_replica_unschedulable_restore_failure">test_single_replica_unschedulable_restore_failure</a></code></li>
 <li><code><a title="tests.test_ha.test_volume_reattach_after_engine_sigkill" href="#tests.test_ha.test_volume_reattach_after_engine_sigkill">test_volume_reattach_after_engine_sigkill</a></code></li>
+<li><code><a title="tests.test_ha.verify_v2_restored_snapshot_info" href="#tests.test_ha.verify_v2_restored_snapshot_info">verify_v2_restored_snapshot_info</a></code></li>
 <li><code><a title="tests.test_ha.wait_pod_for_remount_request" href="#tests.test_ha.wait_pod_for_remount_request">wait_pod_for_remount_request</a></code></li>
 </ul>
 </li>
