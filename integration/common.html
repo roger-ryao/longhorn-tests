@@ -1948,10 +1948,12 @@ backup</p></div>
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">def create_host_disk(client, vol_name, size, node_id):
-    # create a single replica volume and attach it to node
-    volume = create_volume(client, vol_name, size, node_id, 1)
+    # create a single replica v1 volume and attach it to node
+    volume = create_volume(client, vol_name, size, node_id, 1,
+                           data_engine=&#34;v1&#34;)
 
-    # prepare the disk in the host filesystem
+    # For v1 data engine: format as filesystem and mount
+    # For v2 data engine: use raw block device directly
     if DATA_ENGINE == &#34;v1&#34;:
         disk_path = prepare_host_disk(get_volume_endpoint(volume), volume.name)
         return disk_path
@@ -2222,17 +2224,18 @@ created using a storage class).</p></div>
 <div class="desc"></div>
 </dd>
 <dt id="tests.common.create_volume"><code class="name flex">
-<span>def <span class="ident">create_volume</span></span>(<span>client, vol_name, size, node_id, r_num)</span>
+<span>def <span class="ident">create_volume</span></span>(<span>client, vol_name, size, node_id, r_num, data_engine='v1')</span>
 </code></dt>
 <dd>
 <details class="source">
 <summary>
 <span>Expand source code</span>
 </summary>
-<pre><code class="python">def create_volume(client, vol_name, size, node_id, r_num):
+<pre><code class="python">def create_volume(client, vol_name, size, node_id, r_num,
+                  data_engine=DATA_ENGINE):
     volume = client.create_volume(name=vol_name, size=size,
                                   numberOfReplicas=r_num,
-                                  dataEngine=DATA_ENGINE)
+                                  dataEngine=data_engine)
     assert volume.numberOfReplicas == r_num
     assert volume.frontend == VOLUME_FRONTEND_BLOCKDEV
 
@@ -5823,18 +5826,20 @@ def random_labels():
 
     nodes = client.list_node()
     for node in nodes:
-        try:
-            set_node_cordon(core_api, node.id, False)
-            node = client.by_id_node(node.id)
+        for i in range(NODE_UPDATE_RETRY_COUNT):
+            try:
+                set_node_cordon(core_api, node.id, False)
+                node = client.by_id_node(node.id)
 
-            node = set_node_tags(client, node, tags=[])
-            node = wait_for_node_tag_update(client, node.id, [])
-            node = set_node_scheduling(client, node, allowScheduling=True)
-            wait_for_node_update(client, node.id,
-                                 &#34;allowScheduling&#34;, True)
-        except Exception as e:
-            print(&#34;\nException when reset node scheduling and tags&#34;, node)
-            print(e)
+                node = set_node_tags(client, node, tags=[])
+                node = wait_for_node_tag_update(client, node.id, [])
+                node = set_node_scheduling(client, node, allowScheduling=True)
+                wait_for_node_update(client, node.id, &#34;allowScheduling&#34;, True)
+                break
+            except Exception as e:
+                print(e)
+            print(f&#34;Resetting node {node.id} scheduling and tags ... ({i})&#34;)
+            time.sleep(NODE_UPDATE_RETRY_INTERVAL)
 
     managed_k8s_cluster = os.getenv(&#34;MANAGED_K8S_CLUSTER&#34;).lower() == &#39;true&#39;
     if not managed_k8s_cluster:
@@ -9191,7 +9196,7 @@ ref: <a href="https://github.com/longhorn/longhorn/issues/4814">https://github.c
         conditions = volume.conditions
         if conditions is not None and \
                 conditions != {} and \
-                conditions[VOLUME_CONDITION_SCHEDULED] and \
+                VOLUME_CONDITION_SCHEDULED in conditions and \
                 conditions[VOLUME_CONDITION_SCHEDULED][key] and \
                 conditions[VOLUME_CONDITION_SCHEDULED][key] == value:
             break
