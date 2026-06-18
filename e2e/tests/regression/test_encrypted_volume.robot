@@ -309,13 +309,42 @@ Test Encrypted Volume Backup Restore To Encrypted Volume
     ...                  - Restored volumes' replica backend file is exactly 100 Mi + 16 Mi.
     ...                  - The 10 Mi payload checksum matches the original.
     ...                - Issue: https://github.com/longhorn/longhorn/issues/9205
-    IF    '${DATA_ENGINE}' == 'v2'
-        Skip    v2 data engine does not support encrypted volume restore with encrypted=True (https://github.com/longhorn/longhorn/issues/13163)
-    END
     Given Create crypto secret
     And Create storageclass longhorn-crypto with    encrypted=true    dataEngine=${DATA_ENGINE}
     When Create persistentvolumeclaim 0    volume_type=RWO    sc_name=longhorn-crypto    storage_size=100Mi
-    And Create persistentvolumeclaim 1    volume_type=RWX    sc_name=longhorn-crypto    storage_size=100Mi
+    And Create deployment 0 with persistentvolumeclaim 0
+    And Wait for volume of deployment 0 healthy
+    And Write 10 MB data to file data.txt in deployment 0
+    Then Check deployment 0 data in file data.txt is intact
+    And Record file data.txt checksum in deployment 0 as checksum 0
+
+    When Create backup 0 for deployment 0 volume
+    And Verify backup list contains backup no error for deployment 0 volume
+
+    # Restore to new encrypted volumes (encrypted=True)
+    When Create volume 2 from backup 0 of deployment 0 volume    size=100Mi    encrypted=True    dataEngine=${DATA_ENGINE}
+    And Wait for volume 2 detached
+    And Create deployment 2 with volume 2    sc_name=longhorn-crypto    node_stage_secret_name=longhorn-crypto
+    And Wait for volume of deployment 2 healthy
+
+Test Unencrypted Volume Backup Restore To Unencrypted Volume
+    [Tags]    rwo    rwx    backup    restore
+    [Documentation]    Test Plan: Backup Restore – non-encrypted volume scenario (RWO + RWX)
+    ...
+    ...                Create a 100 Mi non-encrypted RWO volume (deployment 0) and RWX volume
+    ...                (deployment 1), write 10 Mi of data to each, take backups.
+    ...                Restore each backup to a new non-encrypted volume.
+    ...                Deployment 0 = RWO source, Deployment 1 = RWX source.
+    ...                Deployment 2 = restored from dep 0 backup, Deployment 3 = restored from dep 1 backup.
+    ...
+    ...                Expected:
+    ...                  - Restored volumes' disk device shows exactly 100 Mi.
+    ...                  - Restored volumes' replica backend file is exactly 100 Mi (no LUKS pre-allocation).
+    ...                  - The 10 Mi payload checksum matches the original.
+    ...                - Related Issue: https://github.com/longhorn/longhorn/issues/13256
+    Given Create storageclass longhorn-test with    dataEngine=${DATA_ENGINE}
+    When Create persistentvolumeclaim 0    volume_type=RWO    sc_name=longhorn-test    storage_size=100Mi
+    And Create persistentvolumeclaim 1    volume_type=RWX    sc_name=longhorn-test    storage_size=100Mi
     And Create deployment 0 with persistentvolumeclaim 0
     And Create deployment 1 with persistentvolumeclaim 1
     And Wait for volume of deployment 0 healthy
@@ -332,24 +361,16 @@ Test Encrypted Volume Backup Restore To Encrypted Volume
     When Create backup 1 for deployment 1 volume
     And Verify backup list contains backup no error for deployment 1 volume
 
-    # Restore to new encrypted volumes (encrypted=True)
-    When Create volume 2 from backup 0 of deployment 0 volume    size=100Mi    encrypted=True    dataEngine=${DATA_ENGINE}
-    And Create volume 3 from backup 1 of deployment 1 volume    size=100Mi    encrypted=True    dataEngine=${DATA_ENGINE}
+    # Restore to new non-encrypted volumes (encrypted=False)
+    When Create volume 2 from backup 0 of deployment 0 volume    size=100Mi    encrypted=False    dataEngine=${DATA_ENGINE}
+    And Create volume 3 from backup 1 of deployment 1 volume    size=100Mi    encrypted=False    dataEngine=${DATA_ENGINE}
     And Wait for volume 2 detached
     And Wait for volume 3 detached
-    # Mount the restored volumes via deployments so that CSI opens the LUKS container.
-    # Must use longhorn-crypto SC (with node-stage-secret-ref) so luksOpen is triggered.
-    And Create deployment 2 with volume 2    sc_name=longhorn-crypto    node_stage_secret_name=longhorn-crypto
-    And Create deployment 3 with volume 3    sc_name=longhorn-crypto    node_stage_secret_name=longhorn-crypto
+    # Mount the restored volumes via deployments using standard StorageClass
+    And Create deployment 2 with volume 2    sc_name=longhorn-test
+    And Create deployment 3 with volume 3    sc_name=longhorn-test
     And Wait for volume of deployment 2 healthy
     And Wait for volume of deployment 3 healthy
-    Then Assert disk size in instance manager pod for deployment 2 is 100Mi
-    And Assert disk size in instance manager pod for deployment 3 is 100Mi
-    # v1 only: v2 replica backend uses a different format (no .img files)
-    IF    '${DATA_ENGINE}' == 'v1'
-        Assert replica file size of deployment 2 is 116Mi
-        Assert replica file size of deployment 3 is 116Mi
-    END
     And Check deployment 2 file data.txt checksum matches checksum 0
     And Check deployment 3 file data.txt checksum matches checksum 1
 

@@ -156,4 +156,4 @@ Cleanup test resources
     reset_node_disks_tags
     cleanup_k8s_node_zone
     reset_longhorn_namespace
-    cleanup_events
+#    cleanup_events
