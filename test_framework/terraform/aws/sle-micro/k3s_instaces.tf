@@ -34,7 +34,7 @@ resource "aws_instance" "lh_aws_instance_controlplane_k3s" {
 resource "aws_instance" "lh_aws_instance_worker_k3s" {
   depends_on = [
     aws_internet_gateway.lh_aws_igw,
-    aws_subnet.lh_aws_private_subnet,
+    aws_subnet.lh_aws_public_subnet,
     aws_instance.lh_aws_instance_controlplane_k3s
   ]
 
@@ -121,6 +121,8 @@ resource "null_resource" "registration_controlplane_k3s" {
   provisioner "remote-exec" {
 
     inline = [
+      "sudo systemctl disable --now rebootmgr || true",
+      "sudo systemctl disable --now transactional-update.timer || true",
       "sudo transactional-update register -r ${var.registration_code}",
     ]
 
@@ -145,6 +147,8 @@ resource "null_resource" "registration_worker_k3s" {
   provisioner "remote-exec" {
 
     inline = [
+      "sudo systemctl disable --now rebootmgr || true",
+      "sudo systemctl disable --now transactional-update.timer || true",
       "sudo transactional-update register -r ${var.registration_code}",
     ]
 
@@ -168,13 +172,13 @@ resource "null_resource" "package_install_controlplane_k3s" {
   provisioner "remote-exec" {
 
     inline = [
+      "sudo setenforce 0 || true",
+      "sudo sed -i 's/^SELINUX=.*/SELINUX=permissive/' /etc/selinux/config || true",
+      "sudo systemctl disable --now transactional-update.timer || true",
+      "sudo systemctl disable --now rebootmgr || true",
       "sudo transactional-update pkg install -y open-iscsi nfs-client jq",
-      "sudo systemctl disable --now transactional-update.timer",
-      "sudo systemctl disable --now rebootmgr",
-      "sudo shutdown -r now",
+      "sudo shutdown -r +1",
     ]
-
-    on_failure = continue
 
     connection {
       type     = "ssh"
@@ -186,7 +190,7 @@ resource "null_resource" "package_install_controlplane_k3s" {
 
 }
 
-resource "time_sleep" "wait_controlplane_1_minute_k3s" {
+resource "time_sleep" "wait_controlplane_3_minute_k3s" {
 
   count = var.k8s_distro_name == "k3s" ? var.lh_aws_instance_count_controlplane : 0
 
@@ -194,7 +198,7 @@ resource "time_sleep" "wait_controlplane_1_minute_k3s" {
     null_resource.package_install_controlplane_k3s
   ]
 
-  create_duration = "60s"
+  create_duration = "180s"
 }
 
 resource "aws_ec2_instance_state" "controlplane_state_k3s" {
@@ -202,12 +206,35 @@ resource "aws_ec2_instance_state" "controlplane_state_k3s" {
   count = var.k8s_distro_name == "k3s" ? var.lh_aws_instance_count_controlplane : 0
 
   depends_on = [
-    time_sleep.wait_controlplane_1_minute_k3s
+    time_sleep.wait_controlplane_3_minute_k3s
   ]
 
   instance_id = aws_instance.lh_aws_instance_controlplane_k3s[count.index].id
   state       = "running"
 }
+
+### node initialization step 2.5: verify required packages are active after reboot
+##resource "null_resource" "verify_packages_controlplane_k3s" {
+##  count = var.k8s_distro_name == "k3s" ? var.lh_aws_instance_count_controlplane : 0
+##
+##  depends_on = [
+##    aws_ec2_instance_state.controlplane_state_k3s
+##  ]
+##
+##  provisioner "remote-exec" {
+##    inline = [
+##      "rpm -q open-iscsi nfs-client jq || (rpm -q open-iscsi nfs-client jq; echo 'ERROR: required packages missing after reboot'; exit 1)",
+##    ]
+##
+##    connection {
+##      type        = "ssh"
+##      user        = "ec2-user"
+##      host        = aws_eip.lh_aws_eip_controlplane[0].public_ip
+##      private_key = file(var.aws_ssh_private_key_file_path)
+##      timeout     = "5m"
+##    }
+##  }
+##}
 
 # node initialization step 2: install required packages after get repos
 resource "null_resource" "package_install_worker_k3s" {
@@ -220,13 +247,13 @@ resource "null_resource" "package_install_worker_k3s" {
   provisioner "remote-exec" {
 
     inline = [
+      "sudo setenforce 0 || true",
+      "sudo sed -i 's/^SELINUX=.*/SELINUX=permissive/' /etc/selinux/config || true",
+      "sudo systemctl disable --now transactional-update.timer || true",
+      "sudo systemctl disable --now rebootmgr || true",
       "sudo transactional-update pkg install -y open-iscsi nfs-client cryptsetup device-mapper jq",
-      "sudo systemctl disable --now transactional-update.timer",
-      "sudo systemctl disable --now rebootmgr",
-      "sudo shutdown -r now",
+      "sudo shutdown -r +1",
     ]
-
-    on_failure = continue
 
     connection {
       type     = "ssh"
@@ -238,7 +265,7 @@ resource "null_resource" "package_install_worker_k3s" {
 
 }
 
-resource "time_sleep" "wait_worker_1_minute_k3s" {
+resource "time_sleep" "wait_worker_3_minute_k3s" {
 
   count = var.k8s_distro_name == "k3s" ? var.lh_aws_instance_count_worker : 0
 
@@ -246,7 +273,7 @@ resource "time_sleep" "wait_worker_1_minute_k3s" {
     null_resource.package_install_worker_k3s
   ]
 
-  create_duration = "60s"
+  create_duration = "180s"
 }
 
 resource "aws_ec2_instance_state" "worker_state_k3s" {
@@ -254,12 +281,35 @@ resource "aws_ec2_instance_state" "worker_state_k3s" {
   count = var.k8s_distro_name == "k3s" ? var.lh_aws_instance_count_worker : 0
 
   depends_on = [
-    time_sleep.wait_worker_1_minute_k3s
+    time_sleep.wait_worker_3_minute_k3s
   ]
 
   instance_id = aws_instance.lh_aws_instance_worker_k3s[count.index].id
   state       = "running"
 }
+
+### node initialization step 2.5: verify required packages are active after reboot
+##resource "null_resource" "verify_packages_worker_k3s" {
+##  count = var.k8s_distro_name == "k3s" ? var.lh_aws_instance_count_worker : 0
+##
+##  depends_on = [
+##    aws_ec2_instance_state.worker_state_k3s
+##  ]
+##
+##  provisioner "remote-exec" {
+##    inline = [
+##      "rpm -q open-iscsi nfs-client jq || (rpm -q open-iscsi nfs-client jq; echo 'ERROR: required packages missing after reboot'; exit 1)",
+##    ]
+##
+##    connection {
+##      type        = "ssh"
+##      user        = "ec2-user"
+##      host        = aws_instance.lh_aws_instance_worker_k3s[count.index].public_ip
+##      private_key = file(var.aws_ssh_private_key_file_path)
+##      timeout     = "5m"
+##    }
+##  }
+##}
 
 # node initialization step 3: setup k3s cluster for master node
 resource "null_resource" "cluster_setup_controlplane_k3s" {
@@ -267,6 +317,7 @@ resource "null_resource" "cluster_setup_controlplane_k3s" {
 
   depends_on = [
     aws_ec2_instance_state.controlplane_state_k3s
+  #  null_resource.verify_packages_controlplane_k3s,
   ]
 
   provisioner "remote-exec" {
@@ -289,6 +340,7 @@ resource "null_resource" "cluster_setup_worker_k3s" {
 
   depends_on = [
     aws_ec2_instance_state.worker_state_k3s,
+#    null_resource.verify_packages_worker_k3s,
     null_resource.cluster_setup_controlplane_k3s
   ]
 
@@ -346,6 +398,7 @@ resource "null_resource" "rsync_kubeconfig_file" {
 
     inline = [
       "until([ -f /etc/rancher/k3s/k3s.yaml ] && [ `kubectl get node -o jsonpath='{.items[*].status.conditions}'  | jq '.[] | select(.type  == \"Ready\").status' | grep -ci true` -eq $((${var.lh_aws_instance_count_controlplane} + ${var.lh_aws_instance_count_worker})) ]); do echo \"waiting for k3s cluster nodes to be running\"; sleep 2; done"
+#      "kubectl wait --for=condition=Ready node --all --timeout=600s"
     ]
 
     connection {

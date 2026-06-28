@@ -1,6 +1,6 @@
 #!/bin/bash
 
-curl -sfL https://get.rke2.io | sudo INSTALL_RKE2_TYPE="server" INSTALL_RKE2_VERSION="${rke2_version}" sh -
+curl -sfL https://get.rke2.io | sudo INSTALL_RKE2_TYPE="server" INSTALL_RKE2_VERSION="${rke2_version}" INSTALL_RKE2_SKIP_SELINUX_RPM=true sh -
 
 sudo mkdir -p /etc/rancher/rke2
 
@@ -18,5 +18,5 @@ sudo systemctl start rke2-server.service
 sudo ln -s /var/lib/rancher/rke2/bin/kubectl /usr/local/bin/kubectl
 
 if [[ -n "${custom_ssh_public_key}" ]]; then
-  echo "${custom_ssh_public_key}" >> /home/suse/.ssh/authorized_keys
+  echo "${custom_ssh_public_key}" >> /home/ec2-user/.ssh/authorized_keys
 fi

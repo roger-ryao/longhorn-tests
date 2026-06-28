@@ -31,13 +31,20 @@ variable "arch" {
 
 variable "os_distro_version" {
   type        = string
-  default     = "6.1"
+  default     = "6.2"
 }
 
 variable "aws_ami_sles_account_number" {
   type        = string
   default     = "amazon"
 }
+
+variable "aws_ami_sles_account_number_6_2" {
+  type        = string
+  description = "AWS account number that owns the custom SLE Micro 6.2 AMI"
+  default     = "641769369267"
+}
+
 
 variable "lh_aws_instance_count_controlplane" {
   type        = number
@@ -99,7 +106,7 @@ variable "k8s_distro_name" {
 
 variable "k8s_distro_version" {
   type        = string
-  default     = "v1.34.2+k3s1"
+  default     = "v1.36.1+k3s1"
   description = <<-EOT
     kubernetes version that will be deployed
     k3s: (default: v1.34.2+k3s1)

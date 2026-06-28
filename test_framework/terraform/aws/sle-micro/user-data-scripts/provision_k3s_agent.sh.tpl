@@ -39,9 +39,9 @@ if [[ "${extra_block_device}" != true ]]; then
   fi
 fi
 
-curl -sfL https://get.k3s.io | sudo INSTALL_K3S_EXEC="agent --token ${k3s_cluster_secret}" K3S_URL="${k3s_server_url}" INSTALL_K3S_VERSION="${k3s_version}" sh -
+curl -sfL https://get.k3s.io | sudo INSTALL_K3S_EXEC="agent --token ${k3s_cluster_secret}" K3S_URL="${k3s_server_url}" INSTALL_K3S_VERSION="${k3s_version}" INSTALL_K3S_SKIP_SELINUX_RPM=true sh -
 sudo systemctl start k3s-agent
 
 if [[ -n "${custom_ssh_public_key}" ]]; then
-  echo "${custom_ssh_public_key}" >> /home/suse/.ssh/authorized_keys
+  echo "${custom_ssh_public_key}" >> /home/ec2-user/.ssh/authorized_keys
 fi

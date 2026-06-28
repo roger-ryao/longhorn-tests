@@ -35,13 +35,25 @@ output "public_ip_mapping" {
   value = jsonencode(
     concat(
       [
-        for controlplane_instance in aws_instance.lh_aws_instance_controlplane : {
+        for controlplane_instance in aws_instance.lh_aws_instance_controlplane_k3s : {
           "name" = controlplane_instance.private_dns,
           "ip"   = controlplane_instance.public_ip
         }
       ],
       [
-        for worker_instance in aws_instance.lh_aws_instance_worker : {
+        for worker_instance in aws_instance.lh_aws_instance_worker_k3s : {
+          "name" = worker_instance.private_dns,
+          "ip"   = worker_instance.public_ip
+        }
+      ],
+      [
+        for controlplane_instance in aws_instance.lh_aws_instance_controlplane_rke2 : {
+          "name" = controlplane_instance.private_dns,
+          "ip"   = controlplane_instance.public_ip
+        }
+      ],
+      [
+        for worker_instance in aws_instance.lh_aws_instance_worker_rke2 : {
           "name" = worker_instance.private_dns,
           "ip"   = worker_instance.public_ip
         }

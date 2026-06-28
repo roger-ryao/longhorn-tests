@@ -40,7 +40,7 @@ fi
 RKE_SERVER_IP=`echo ${rke2_server_url} | sed 's#https://##' | awk -F ":" '{print $1}'`
 RKE_SERVER_PORT=`echo ${rke2_server_url} | sed 's#https://##' | awk -F ":" '{print $2}'`
 
-curl -sfL https://get.rke2.io | sudo INSTALL_RKE2_TYPE="agent" INSTALL_RKE2_VERSION="${rke2_version}" sh -
+curl -sfL https://get.rke2.io | sudo INSTALL_RKE2_TYPE="agent" INSTALL_RKE2_VERSION="${rke2_version}" INSTALL_RKE2_SKIP_SELINUX_RPM=true sh -
 
 sudo mkdir -p /etc/rancher/rke2
 
@@ -53,7 +53,7 @@ sudo systemctl enable rke2-agent.service
 sudo systemctl start rke2-agent.service
 
 if [[ -n "${custom_ssh_public_key}" ]]; then
-  echo "${custom_ssh_public_key}" >> /home/suse/.ssh/authorized_keys
+  echo "${custom_ssh_public_key}" >> /home/ec2-user/.ssh/authorized_keys
 fi
 
 exit $?

@@ -1,12 +1,12 @@
 # Query AWS for RHEL AMI
 locals {
   aws_ami_sles_arch = var.arch == "amd64" ? "x86_64" : var.arch
+  effective_ami_account_number = var.os_distro_version == "6.2" ? var.aws_ami_sles_account_number_6_2 : var.aws_ami_sles_account_number
 }
 
 data "aws_ami" "aws_ami_sles" {
   most_recent      = true
-  owners           = [var.aws_ami_sles_account_number]
-
+  owners           = [local.effective_ami_account_number]
   filter {
     name   = "name"
     values = ["suse-sle-micro-${replace(var.os_distro_version, ".", "-")}-byos-v*-hvm-ssd-${local.aws_ami_sles_arch}"]
