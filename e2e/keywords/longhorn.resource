@@ -90,6 +90,9 @@ Check v1 instance manager pods did not restart
 Check v1 instance manager pods recreated
     wait_all_instance_managers_recreated
 
+Check v2 instance manager pods recreated
+    wait_all_instance_managers_recreated    data_engine=v2
+
 Wait for engine instances in ${engine_type} instance manager CR on node ${node_id} to be cleaned up
     ${node_name} =    get_node_by_index    ${node_id}
     wait_for_instance_manager_cr_engine_instances_to_be_cleaned_up    ${node_name}    ${engine_type}
@@ -181,23 +184,34 @@ Check longhorn manager pods not restarted after test start
 Check longhorn backing image manager image is ${expected_image}
     check_backing_image_manager_images    ${expected_image}
 
-Assert disk size in instance manager pod for ${resource_kind} ${resource_id} is ${size}
-    ${expected_size_byte} =    convert_size_to_bytes    ${size}    to_str=True
+Assert encrypted volume disk size in instance manager for ${resource_kind} ${resource_id}
+    [Documentation]    Single keyword for encrypted volume disk size checks.
+    ...                Required: encrypted_size in all engines.
+    ...                raw_size is optional; if set, RAW device size is checked.
+    ...                For v1, raw_size must not be set.
+    [Arguments]    ${encrypted_size}    ${raw_size}=${EMPTY}
+    Run Keyword If    '${encrypted_size}' == '${EMPTY}'
+    ...    Fail    encrypted_size is required
+    Run Keyword If    '${DATA_ENGINE}' == 'v1' and '${raw_size}' != '${EMPTY}'
+    ...    Fail    raw_size must not be set when DATA_ENGINE is v1
+
+    ${encrypted_size_byte} =    convert_size_to_bytes    ${encrypted_size}    to_str=True
     ${resource_name}=    generate_name_with_suffix    ${resource_kind}    ${resource_id}
     ${volume_name}=    Run Keyword If    '${resource_kind}' == 'volume'
     ...        Set Variable    ${resource_name}
     ...    ELSE
     ...        get_workload_volume_name    ${resource_name}
     ${instance_manager_name} =    get_engine_instance_manager_name    ${volume_name}
-    Wait Until Keyword Succeeds    ${RETRY_COUNT}    ${RETRY_INTERVAL}
-    ...    Check disk size in instance manager pod    ${instance_manager_name}    ${volume_name}    ${expected_size_byte}
+    ${encrypted_device_name} =    Set Variable If    "${DATA_ENGINE}" == "v2"    ${volume_name}-encrypted    ${volume_name}
+    wait_for_disk_size_in_instance_manager_pod    ${instance_manager_name}    ${encrypted_device_name}    ${encrypted_size_byte}
 
-Check disk size in instance manager pod
-    [Arguments]    ${instance_manager_name}    ${volume_name}    ${expected_size}
-    ${cmd} =    Set Variable    fdisk -l /dev/mapper/${volume_name}
-    ${longhorn_namespace} =    get_longhorn_namespace
-    ${result}=    pod_exec    ${instance_manager_name}    ${longhorn_namespace}    ${cmd}
-    Should Contain    ${result}    ${expected_size}
+    Run Keyword If    '${DATA_ENGINE}' == 'v2' and '${raw_size}' != '${EMPTY}'
+    ...    Assert v2 raw disk size in instance manager    ${instance_manager_name}    ${volume_name}    ${raw_size}
+
+Assert v2 raw disk size in instance manager
+    [Arguments]    ${instance_manager_name}    ${volume_name}    ${raw_size}
+    ${raw_size_byte} =    convert_size_to_bytes    ${raw_size}    to_str=True
+    wait_for_disk_size_in_instance_manager_pod    ${instance_manager_name}    ${volume_name}    ${raw_size_byte}
 
 Patch Longhorn Manager Resources With
     [Arguments]    ${cpu_request}    ${memory_request}    ${cpu_limit}    ${memory_limit}
