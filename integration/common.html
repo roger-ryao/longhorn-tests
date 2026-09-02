@@ -1357,7 +1357,7 @@ def clients(request):
 <div class="desc"></div>
 </dd>
 <dt id="tests.common.copy_file_to_volume_dev_mb_data"><code class="name flex">
-<span>def <span class="ident">copy_file_to_volume_dev_mb_data</span></span>(<span>src_path, dest_path, src_offset, dest_offset, size_in_mb, stream_exec_timeout=600)</span>
+<span>def <span class="ident">copy_file_to_volume_dev_mb_data</span></span>(<span>src_path, dest_path, src_offset, dest_offset, size_in_mb, stream_exec_timeout=900)</span>
 </code></dt>
 <dd>
 <details class="source">
@@ -2587,7 +2587,7 @@ if a nonexistent Pod is specified.</p>
 <div class="desc"></div>
 </dd>
 <dt id="tests.common.delete_and_wait_pvc"><code class="name flex">
-<span>def <span class="ident">delete_and_wait_pvc</span></span>(<span>api, pvc_name, retry_counts=150)</span>
+<span>def <span class="ident">delete_and_wait_pvc</span></span>(<span>api, pvc_name, retry_counts=300)</span>
 </code></dt>
 <dd>
 <details class="source">
@@ -3118,7 +3118,7 @@ The output of the command.</p></div>
 
     for r in replicas:
         tmp_meta_file_name = \
-            EXPANSION_SNAP_TMP_META_NAME_PATTERN % size
+            EXPANSION_SNAP_TMP_META_NAME_PATTERN % (size, volname)
         # os.path.join() cannot deal with the path containing &#34;/&#34;
         cmd = [
             &#39;/bin/sh&#39;, &#39;-c&#39;,
@@ -3323,7 +3323,7 @@ been completed successfully</p></div>
                 &#34;otherwise the field r.instanceManagerName is empty&#34;)
 
         tmp_meta_file_name = \
-            EXPANSION_SNAP_TMP_META_NAME_PATTERN % size
+            EXPANSION_SNAP_TMP_META_NAME_PATTERN % (size, volname)
         tmp_meta_file_path = \
             INSTANCE_MANAGER_HOST_PATH_PREFIX + \
             r.dataPath + &#34;/&#34; + tmp_meta_file_name
@@ -7113,7 +7113,7 @@ ref: <a href="https://github.com/longhorn/longhorn/issues/4814">https://github.c
 <div class="desc"></div>
 </dd>
 <dt id="tests.common.wait_and_get_stable_pod"><code class="name flex">
-<span>def <span class="ident">wait_and_get_stable_pod</span></span>(<span>core_api,<br>pod_name,<br>namespace='default',<br>is_phase='Running',<br>timeout_cnt=150,<br>stable_retry=90)</span>
+<span>def <span class="ident">wait_and_get_stable_pod</span></span>(<span>core_api,<br>pod_name,<br>namespace='default',<br>is_phase='Running',<br>timeout_cnt=300,<br>stable_retry=90)</span>
 </code></dt>
 <dd>
 <details class="source">
@@ -7253,7 +7253,7 @@ deleted immediately, so add a wait mechanism to get a stable running pod.</p></d
 <div class="desc"></div>
 </dd>
 <dt id="tests.common.wait_delete_pvc"><code class="name flex">
-<span>def <span class="ident">wait_delete_pvc</span></span>(<span>api, pvc_name, retry_counts=150)</span>
+<span>def <span class="ident">wait_delete_pvc</span></span>(<span>api, pvc_name, retry_counts=300)</span>
 </code></dt>
 <dd>
 <details class="source">
@@ -7818,7 +7818,7 @@ deleted immediately, so add a wait mechanism to get a stable running pod.</p></d
 <div class="desc"></div>
 </dd>
 <dt id="tests.common.wait_for_cron_job_count"><code class="name flex">
-<span>def <span class="ident">wait_for_cron_job_count</span></span>(<span>batch_v1_api, number, label='', retry_counts=150)</span>
+<span>def <span class="ident">wait_for_cron_job_count</span></span>(<span>batch_v1_api, number, label='', retry_counts=300)</span>
 </code></dt>
 <dd>
 <details class="source">
@@ -7840,7 +7840,7 @@ deleted immediately, so add a wait mechanism to get a stable running pod.</p></d
 <div class="desc"></div>
 </dd>
 <dt id="tests.common.wait_for_cron_job_create"><code class="name flex">
-<span>def <span class="ident">wait_for_cron_job_create</span></span>(<span>batch_v1_api, label='', retry_counts=150)</span>
+<span>def <span class="ident">wait_for_cron_job_create</span></span>(<span>batch_v1_api, label='', retry_counts=300)</span>
 </code></dt>
 <dd>
 <details class="source">
@@ -7863,7 +7863,7 @@ deleted immediately, so add a wait mechanism to get a stable running pod.</p></d
 <div class="desc"></div>
 </dd>
 <dt id="tests.common.wait_for_cron_job_delete"><code class="name flex">
-<span>def <span class="ident">wait_for_cron_job_delete</span></span>(<span>batch_v1_api, label='', retry_counts=150)</span>
+<span>def <span class="ident">wait_for_cron_job_delete</span></span>(<span>batch_v1_api, label='', retry_counts=300)</span>
 </code></dt>
 <dd>
 <details class="source">
@@ -7924,12 +7924,14 @@ deleted immediately, so add a wait mechanism to get a stable running pod.</p></d
 <pre><code class="python">def wait_for_device_login(dest_path, name):
     dev = &#34;&#34;
     for i in range(RETRY_COUNTS):
-        for j in range(RETRY_COMMAND_COUNT):
+        for j in range(RETRY_COMMAND_COUNT*2):
             files = []
             try:
                 files = os.listdir(dest_path)
                 break
-            except Exception:
+            except Exception as e:
+                print(f&#34;[wait_for_device_login] &#34;
+                      f&#34;Failed to list {dest_path} (attempt {j+1}): {e}&#34;)
                 time.sleep(1)
         assert files
         if name in files:
@@ -8620,7 +8622,7 @@ deleted immediately, so add a wait mechanism to get a stable running pod.</p></d
 <div class="desc"></div>
 </dd>
 <dt id="tests.common.wait_for_pods_volume_state"><code class="name flex">
-<span>def <span class="ident">wait_for_pods_volume_state</span></span>(<span>client, pod_list, field, value, retry_counts=150)</span>
+<span>def <span class="ident">wait_for_pods_volume_state</span></span>(<span>client, pod_list, field, value, retry_counts=300)</span>
 </code></dt>
 <dd>
 <details class="source">
@@ -8668,7 +8670,7 @@ deleted immediately, so add a wait mechanism to get a stable running pod.</p></d
 <div class="desc"></div>
 </dd>
 <dt id="tests.common.wait_for_rebuild_complete"><code class="name flex">
-<span>def <span class="ident">wait_for_rebuild_complete</span></span>(<span>client, volume_name, retry_count=150)</span>
+<span>def <span class="ident">wait_for_rebuild_complete</span></span>(<span>client, volume_name, retry_count=300)</span>
 </code></dt>
 <dd>
 <details class="source">
@@ -8706,7 +8708,7 @@ deleted immediately, so add a wait mechanism to get a stable running pod.</p></d
 <div class="desc"></div>
 </dd>
 <dt id="tests.common.wait_for_rebuild_start"><code class="name flex">
-<span>def <span class="ident">wait_for_rebuild_start</span></span>(<span>client, volume_name, retry_count=150, retry_interval=1)</span>
+<span>def <span class="ident">wait_for_rebuild_start</span></span>(<span>client, volume_name, retry_count=300, retry_interval=1)</span>
 </code></dt>
 <dd>
 <details class="source">
@@ -8816,7 +8818,7 @@ deleted immediately, so add a wait mechanism to get a stable running pod.</p></d
 <div class="desc"></div>
 </dd>
 <dt id="tests.common.wait_for_replica_failed"><code class="name flex">
-<span>def <span class="ident">wait_for_replica_failed</span></span>(<span>client, volname, replica_name, retry_cnts=150, retry_ivl=1)</span>
+<span>def <span class="ident">wait_for_replica_failed</span></span>(<span>client, volname, replica_name, retry_cnts=300, retry_ivl=1)</span>
 </code></dt>
 <dd>
 <details class="source">
@@ -9538,7 +9540,7 @@ deleted immediately, so add a wait mechanism to get a stable running pod.</p></d
 <div class="desc"></div>
 </dd>
 <dt id="tests.common.wait_for_volume_healthy"><code class="name flex">
-<span>def <span class="ident">wait_for_volume_healthy</span></span>(<span>client, name, retry_count=600)</span>
+<span>def <span class="ident">wait_for_volume_healthy</span></span>(<span>client, name, retry_count=900)</span>
 </code></dt>
 <dd>
 <details class="source">
@@ -9885,7 +9887,7 @@ deleted immediately, so add a wait mechanism to get a stable running pod.</p></d
 <div class="desc"></div>
 </dd>
 <dt id="tests.common.wait_for_volume_status"><code class="name flex">
-<span>def <span class="ident">wait_for_volume_status</span></span>(<span>client, name, key, value, retry_count=600)</span>
+<span>def <span class="ident">wait_for_volume_status</span></span>(<span>client, name, key, value, retry_count=900)</span>
 </code></dt>
 <dd>
 <details class="source">
@@ -10224,7 +10226,7 @@ volume. Trigger a failed assertion of one is detected.
 <div class="desc"></div>
 </dd>
 <dt id="tests.common.write_volume_dev_random_mb_data"><code class="name flex">
-<span>def <span class="ident">write_volume_dev_random_mb_data</span></span>(<span>path, offset_in_mb, length_in_mb, stream_exec_timeout=600)</span>
+<span>def <span class="ident">write_volume_dev_random_mb_data</span></span>(<span>path, offset_in_mb, length_in_mb, stream_exec_timeout=900)</span>
 </code></dt>
 <dd>
 <details class="source">
