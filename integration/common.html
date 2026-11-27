@@ -79,12 +79,23 @@ el.replaceWith(d);
     assert volume.standby is False
     assert volume.frontend == VOLUME_FRONTEND_BLOCKDEV
 
+    wait_for_volume_status(client, volume_name, &#34;restoreRequired&#34;, False)
     wait_for_volume_detached(client, volume_name)
 
+    # Engine spec/status are reconciled separately from the volume state.
+    for i in range(RETRY_COUNTS):
+        volume = client.by_id_volume(volume_name)
+        engine = get_volume_engine(volume)
+        if engine.lastRestoredBackup == &#34;&#34; and \
+                engine.requestedBackupRestore == &#34;&#34;:
+            break
+        time.sleep(RETRY_INTERVAL)
+
     volume = client.by_id_volume(volume_name)
+    assert volume.state == VOLUME_STATE_DETACHED
     engine = get_volume_engine(volume)
-    assert engine.lastRestoredBackup == &#34;&#34;
-    assert engine.requestedBackupRestore == &#34;&#34;</code></pre>
+    assert engine.lastRestoredBackup == &#34;&#34;, f&#34;engine = {engine}&#34;
+    assert engine.requestedBackupRestore == &#34;&#34;, f&#34;engine = {engine}&#34;</code></pre>
 </details>
 <div class="desc"></div>
 </dd>
@@ -2643,7 +2654,7 @@ if a nonexistent Pod is specified.</p>
 
     # We need to generate the names for the PVCs on our own so we can
     # delete them.
-    pod_data = get_statefulset_pod_info(api, statefulset)
+    pod_data = get_statefulset_pod_info(api, statefulset, ignore_missing=True)
 
     try:
         apps_api.delete_namespaced_stateful_set(
@@ -4407,18 +4418,25 @@ IPv4 example: 10.0.1.24:4420 -&gt; 10.0.1.24</p></div>
 <div class="desc"></div>
 </dd>
 <dt id="tests.common.get_statefulset_pod_info"><code class="name flex">
-<span>def <span class="ident">get_statefulset_pod_info</span></span>(<span>api, s_set)</span>
+<span>def <span class="ident">get_statefulset_pod_info</span></span>(<span>api, s_set, ignore_missing=False)</span>
 </code></dt>
 <dd>
 <details class="source">
 <summary>
 <span>Expand source code</span>
 </summary>
-<pre><code class="python">def get_statefulset_pod_info(api, s_set):
+<pre><code class="python">def get_statefulset_pod_info(api, s_set, ignore_missing=False):
     pod_info = []
     for i in range(s_set[&#39;spec&#39;][&#39;replicas&#39;]):
         pod_name = s_set[&#39;metadata&#39;][&#39;name&#39;] + &#39;-&#39; + str(i)
-        pod = api.read_namespaced_pod(name=pod_name, namespace=&#39;default&#39;)
+        try:
+            pod = api.read_namespaced_pod(name=pod_name, namespace=&#39;default&#39;)
+        except ApiException as e:
+            # During cleanup the pod may never have been created (e.g. an
+            # earlier pod never became ready) or is already gone.
+            if ignore_missing and e.status == 404:
+                continue
+            raise
         pvc_name = pod.spec.volumes[0].persistent_volume_claim.claim_name
         pv_name = get_volume_name(api, pvc_name)
         pod_info.append({
